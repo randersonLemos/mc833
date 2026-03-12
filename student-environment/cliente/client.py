@@ -2,6 +2,8 @@ import socket
 import struct
 import threading
 import sys
+import queue
+import os
 
 def checksum(msg):
     """Calcula o checksum (mantido da sua implementação original)."""
@@ -17,10 +19,22 @@ def checksum(msg):
 
 class RawClient:
     def __init__(self, src_ip="10.0.2.2", dest_ip="10.0.1.2", sport=12345, dport=9999):
-        self.src_ip = src_ip
+        self.src_ip  = src_ip
         self.dest_ip = dest_ip
         self.sport = sport
         self.dport = dport
+        
+        # Fila thread-safe para armazenar a resposta de texto do servidor
+        self.response_queue = queue.Queue() 
+
+        # Garante que a pasta stream exista para salvar os vídeos
+        self.stream_dir = "output"
+        os.makedirs(self.stream_dir, exist_ok=True)
+        self.video_file_path = os.path.join(self.stream_dir, "video_stream.ts")
+        
+        # Limpa o arquivo de vídeo anterior ao iniciar o cliente
+        with open(self.video_file_path, "wb") as f:
+            pass 
 
         # 1. Socket para ENVIO (Layer 3 - IPPROTO_RAW)
         try:
@@ -37,7 +51,6 @@ class RawClient:
             sys.exit(1)
 
         # 3. TRUQUE DO KERNEL: Criar um socket UDP padrão apenas para "reservar" a porta no SO.
-        # Isso evita que o kernel do cliente envie o erro ICMP "Port Unreachable" que vimos no tcpdump.
         try:
             self.dummy_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.dummy_sock.bind((self.src_ip, self.sport))
@@ -50,25 +63,46 @@ class RawClient:
             try:
                 packet, addr = self.recv_sock.recvfrom(65535)
                 
-                # O pacote capturado via IPPROTO_UDP no Linux começa com o cabeçalho IPv4
+                # O pacote capturado via IPPROTO_UDP no Linux começa com o cabeçalho IPv4 (20 bytes)
                 ip_header = packet[:20]
                 iph = struct.unpack('!BBHHHBBH4s4s', ip_header)
                 protocol = iph[6]
                 src_ip_addr = socket.inet_ntoa(iph[8])
                 
-                # Filtra apenas UDP (17) e apenas os que vêm do nosso Servidor
+                # Filtra apenas UDP (17) e apenas os que vêm do IP do Servidor
                 if protocol == 17 and src_ip_addr == self.dest_ip:
+                    # Cabeçalho UDP ocupa os bytes 20 a 28
                     udp_header = packet[20:28]
                     udph = struct.unpack('!HHHH', udp_header)
-                    src_port = udph[0]
                     dest_port = udph[1]
                     
-                    # Filtra para garantir que a resposta veio para a nossa porta de origem (12345)
+                    # Filtra para garantir que a resposta veio para a nossa porta de origem
                     if dest_port == self.sport:
                         payload = packet[28:]
-                        # Quebra a linha e imprime a resposta do servidor por cima do input atual
-                        print(f"\n\n [+] Resposta do Servidor: {payload.decode('utf-8', errors='ignore')}")
-                        print("Cliente: ", end="", flush=True) # Restaura o prompt visualmente
+                        
+                        if not payload:
+                            continue
+
+                        # Verifica se o pacote é RTP (Versão 2 -> Byte inicial começa com 0x80 = 128)
+                        # E verifica se tem pelo menos o tamanho do cabeçalho RTP (12 bytes)
+                        if payload[0] == 0x80 and len(payload) > 12:
+                            
+                            # --- NOVO: Extrai o Sequence Number (Bytes 2 e 3 do payload) ---
+                            # O formato '!H' extrai 2 bytes (unsigned short) em Big-Endian
+                            seq_num = struct.unpack('!H', payload[2:4])[0]
+                            print(f" [*] Cliente: Chunk de vídeo [#{seq_num}] recebido e salvo.")
+                            
+                            # 1. É vídeo! Remove os 12 bytes do cabeçalho RTP
+                            video_chunk = payload[12:]
+                            
+                            # 2. Salva o chunk bruto no arquivo .ts
+                            with open(self.video_file_path, "ab") as f:
+                                f.write(video_chunk)
+                                
+                        else:
+                            # Se não for vídeo, é uma mensagem de texto. Decodifica e envia para a fila.
+                            mensagem = payload.decode('utf-8', errors='ignore').strip()
+                            self.response_queue.put(mensagem)
 
             except Exception as e:
                 print(f"\n[-] Erro na thread de escuta: {e}")
@@ -106,12 +140,15 @@ class RawClient:
 
     def start(self):
         """Inicia a thread de escuta e o loop principal de input."""
-        # Configura a thread de escuta como Daemon para que feche quando o programa principal fechar
         listener = threading.Thread(target=self.listen_for_responses, daemon=True)
         listener.start()
 
         print(f"[*] Cliente RAW iniciado. Origem: {self.src_ip}:{self.sport} | Destino: {self.dest_ip}:{self.dport}")
-        print("[*] Digite 'sair' para encerrar.\n")
+        print(f"[*] Os streams de vídeo serão salvos em: ./{self.video_file_path}")
+        print(f"[*] Digite 'sair' para encerrar.\n")
+
+        # Define o tempo máximo de espera (em segundos)
+        TIMEOUT_SEGUNDOS = 3.0 
 
         while True:
             try:
@@ -121,7 +158,37 @@ class RawClient:
                     break
                 
                 if msg.strip():
+                    # Limpa mensagens antigas da fila antes de enviar uma nova
+                    while not self.response_queue.empty():
+                        self.response_queue.get_nowait()
+
                     self.send_message(msg)
+                    
+                    # Bloqueia aguardando a resposta com um tempo limite
+                    try:
+                        mensagem_recebida = self.response_queue.get(timeout=TIMEOUT_SEGUNDOS)
+                        
+                        # Estilização em formato de tabela/caixa
+                        largura = 70
+                        borda = "-" * largura
+                        print(f"\n{borda}")
+                        print(f" [+] Resposta do Servidor:")
+                        print(f"{borda}")
+                        print(f" {mensagem_recebida}")
+                        print(f"{borda}\n")
+                        
+                        # UX: Dica para o usuário abrir o player de vídeo quando iniciar o stream
+                        if msg.lower().startswith("stream") and "[STREAM]" in mensagem_recebida:
+                            print(f" [*] O vídeo começou a ser baixado!")
+                            print(f" [*] Em outro terminal do contêiner cliente, execute:\n")
+                            print(f"     vlc ./{self.video_file_path}\n")
+                            print(f" [*] (Ou use 'mpv ./{self.video_file_path}')\n")
+                            
+                    except queue.Empty:
+                        # Ocorre se o get() exceder o tempo de TIMEOUT_SEGUNDOS
+                        if not msg.lower().startswith("stream"):
+                            print(f"\n[-] Tempo limite esgotado ({TIMEOUT_SEGUNDOS}s). Nenhuma resposta de texto do servidor.\n")
+                        
             except KeyboardInterrupt:
                 print("\n[!] Encerrando cliente...")
                 break

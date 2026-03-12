@@ -1,10 +1,10 @@
 import socket
-import struct
-import fcntl
 from receiver import Receiver
 from replier import Replier
 import utils
-
+from command.catalog import handle_catalog
+from command.help import handle_help
+from command.stream import handle_stream
 
 def start_server():
     interface = "eth0"
@@ -35,32 +35,60 @@ def start_server():
     print("="*50 + "\n")
 
     while True:
-            try:
-                packet, addr = s.recvfrom(9999)
+        try:
+            packet, addr = s.recvfrom(9999)
 
-                # Passa o pacote bruto para o Receiver analisar
-                received_pkt, error_msg = receiver.process(packet)
+            # Passa o pacote bruto para o Receiver analisar
+            received_pkt, error_msg = receiver.process(packet)
 
-                # Se error_msg existir, o pacote foi descartado
-                if error_msg:
-                    # print(f"[DESCARTADO] {error_msg}") # Opcional: comente se estiver poluindo muito o terminal
-                    continue
+            # Se error_msg existir, o pacote foi descartado
+            if error_msg:
+                continue
 
-                # Chama a função extraída para imprimir os detalhes
-                utils.print_packet_info(received_pkt)
+            # Chama a função extraída para imprimir os detalhes
+            utils.print_packet_info(received_pkt)
 
-                # Responde cliente
-                payload_str = received_pkt.payload.decode(errors='ignore')
-                reply_data = f"Servidor recebeu: {payload_str}".encode('utf-8')
+            # 1. Extrai o texto do payload e remove espaços/quebras de linha extras
+            payload_str = received_pkt.payload.decode(errors='ignore').strip()
+            
+            # 2. Converte para minúsculas apenas para facilitar a verificação do comando
+            command_lower = payload_str.lower()
+            
+            # --- LÓGICA DE ROTEAMENTO DE COMANDOS ---
+            
+            if command_lower == "catalogo":
+                reply_text = handle_catalog()
+
+            elif command_lower.startswith("stream"):
+                # Passamos os parâmetros necessários para a função no módulo
+                response_text = handle_stream(payload_str, server_ip, received_pkt, replier)
                 
-                replier.send_reply(server_ip, received_pkt, reply_data)
+                # Se a função retornar texto (ex: erro de arquivo não encontrado), nós enviamos
+                if response_text:
+                    reply_data = response_text.encode('utf-8')
+                    replier.send_reply(server_ip, received_pkt, reply_data)
+                
+                # O comando stream controla seu próprio envio de bytes, então voltamos ao início do loop
+                continue
+            
+            elif command_lower == "help":
+                reply_text = handle_help()
+                    
+            else:
+                # Nova resposta padrão orientando o usuário a usar o 'help'
+                reply_text = f"[ERRO] Comando incorreto: '{payload_str}'. Digite 'help' para ver os comandos disponíveis do servidor."
+                
+            # --- FIM DA LÓGICA ---
 
-            except KeyboardInterrupt:
-                print("\n[!] Encerrando o servidor raw socket...")
-                break
-            except Exception as e:
-                print(f"[-] Ocorreu um erro ao processar o pacote: {e}")
+            # 3. Codifica a resposta final e envia de volta ao cliente
+            reply_data = reply_text.encode('utf-8')
+            replier.send_reply(server_ip, received_pkt, reply_data)
 
+        except KeyboardInterrupt:
+            print("\n[!] Encerrando o servidor raw socket...")
+            break
+        except Exception as e:
+            print(f"[-] Ocorreu um erro ao processar o pacote: {e}")
 
 if __name__ == "__main__":
     start_server()

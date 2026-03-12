@@ -4,13 +4,12 @@ import struct
 class Replier:
     def __init__(self):
         try:
-            # Cria socket raw para envio na camada de rede (Layer 3)
             self.send_sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_RAW)
         except PermissionError:
             print("[-] Erro: Requer privilégios de Root/Admin para criar RAW socket de envio.")
             self.send_sock = None
 
-    def send_reply(self, server_ip, received_pkt, message_bytes):
+    def send_reply(self, server_ip, received_pkt, message_bytes, chunk_stamp=None):
         """Constrói e envia um pacote UDP bruto de volta ao remetente."""
         if not self.send_sock:
             return
@@ -32,8 +31,8 @@ class Replier:
                                 ip_saddr, ip_daddr)
 
         # --- CABEÇALHO UDP (8 Bytes) ---
-        sport = received_pkt.dest_port # A porta destino de antes vira a nossa origem
-        dport = received_pkt.src_port  # A porta origem do cliente vira nosso destino
+        sport = received_pkt.dest_port 
+        dport = received_pkt.src_port  
         udp_len = 8 + len(message_bytes)
         udp_check = 0 
 
@@ -44,6 +43,12 @@ class Replier:
         
         try:
             self.send_sock.sendto(packet, (received_pkt.src_ip, 0))
-            print(f" [*] Replier: Resposta bruta enviada para {received_pkt.src_ip}:{dport}")
+            
+            # --- LÓGICA DO LOG ATUALIZADA ---
+            if chunk_stamp is not None:
+                print(f" [*] Replier: Chunk de vídeo [#{chunk_stamp}] enviado para {received_pkt.src_ip}:{dport}")
+            else:
+                print(f" [*] Replier: Resposta de texto enviada para {received_pkt.src_ip}:{dport}")
+                
         except Exception as e:
             print(f" [-] Replier Erro ao enviar pacote: {e}")
