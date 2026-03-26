@@ -112,70 +112,85 @@ Essa escolha é intencional, pois um pacote padrão MPEG-TS (usado em transmiss�
 
 ## 5. Quantidade de Pacotes por Frame
 
-A quantidade de pacotes necessária por frame de vídeo não é fixa, dependendo diretamente da **taxa de bits (bitrate)** e da **taxa de frames por segundo (FPS)** de cada arquivo de vídeo (`.ts`).
+A quantidade de pacotes por frame depende da **taxa de bits (bitrate)** e da **taxa de frames por segundo (FPS)** de cada vídeo. Usando a ferramenta `ffprobe`, obtivemos os valores reais para cada vídeo do projeto.
 
-Para determinar esses valores para os vídeos disponíveis (`world.ts`, `medium.ts`, etc.), você pode utilizar uma ferramenta de análise de mídia como o `ffprobe` (parte da suíte FFmpeg).
-
-### Como Obter o Bitrate e FPS de um Vídeo
-
-Execute o seguinte comando no seu terminal para cada arquivo de vídeo:
-
-```bash
-# Substitua 'video.ts' pelo nome do seu arquivo
-ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate,bit_rate -of default=noprint_wrappers=1:nokey=1 video.ts
-```
-
-O comando retornará dois valores: o primeiro é o FPS (em formato de fração, como `30/1`) e o segundo é o bitrate em bits por segundo.
-
-### Cálculo de Pacotes por Frame
-
-A fórmula é: `Pacotes por Frame = ArredondarParaCima(Tamanho do Frame em Bytes / 1316)`
-
+A fórmula para o cálculo é:
+`Pacotes por Frame = ArredondarParaCima(Tamanho do Frame em Bytes / 1316)`
 Onde: `Tamanho do Frame em Bytes = (Bitrate em bps / 8) / FPS`
 
-A seguir, aplicamos essa fórmula aos vídeos do projeto, usando valores de exemplo. **Você deve substituir os valores de bitrate e FPS pelos valores reais obtidos com o `ffprobe`**.
+A seguir, aplicamos essa fórmula aos vídeos do projeto.
 
-**Exemplo de Cálculo para `world.ts`**
-
-Vamos supor que, ao rodar o `ffprobe`, descobrimos que o vídeo `world.ts` tem as seguintes propriedades:
+### Cálculo para `world.ts`
 *   **FPS:** 30
-*   **Bitrate:** 6.000.000 bps (6 Mbps)
+*   **Bitrate:** 906.294 bps
 
 1.  **Tamanho do Frame em Bytes:**
-    `(6.000.000 bps / 8) / 30 fps = 25.000 bytes/frame`
+    `(906.294 bps / 8) / 30 fps = 3.776 bytes/frame`
 
 2.  **Pacotes por Frame:**
-    `ceil(25.000 bytes / 1316 bytes/pacote) = ceil(19.00) =` **19 pacotes**
+    `ceil(3.776 bytes / 1316 bytes/pacote) = ceil(2.87) =` **3 pacotes**
 
-Este cálculo deve ser repetido para os arquivos `medium.ts` e `istockphoto-2170838017-640_adpp_is.ts` com seus respectivos valores de bitrate e FPS.
+### Cálculo para `medium.ts`
+*   **FPS:** 30
+*   **Bitrate:** 4.549.750 bps
 
-## 6. Taxa de Transmissão para um Stream a 30fps
+1.  **Tamanho do Frame em Bytes:**
+    `(4.549.750 bps / 8) / 30 fps = 18.957 bytes/frame`
 
-A taxa de transmissão da rede (bitrate total) para manter um stream a 30fps depende da resolução do vídeo e inclui o overhead dos cabeçalhos (IP, UDP, RTP).
+2.  **Pacotes por Frame:**
+    `ceil(18.957 bytes / 1316 bytes/pacote) = ceil(14.40) =` **15 pacotes**
+
+### Cálculo para `istockphoto-2170838017-640_adpp_is.ts`
+*   **FPS:** 25
+*   **Bitrate:** 871.897 bps
+
+1.  **Tamanho do Frame em Bytes:**
+    `(871.897 bps / 8) / 25 fps = 4.359 bytes/frame`
+
+2.  **Pacotes por Frame:**
+    `ceil(4.359 bytes / 1316 bytes/pacote) = ceil(3.31) =` **4 pacotes**
+
+## 6. Taxa de Transmissão para um Stream
+
+A taxa de transmissão da rede (bitrate total) para manter um stream depende do bitrate do vídeo e inclui o overhead dos cabeçalhos (IP, UDP, RTP).
 
 O overhead por pacote é de `20 (IP) + 8 (UDP) + 12 (RTP) = 40 bytes`.
 O tamanho total de um pacote de vídeo é `1316 (dados) + 40 (cabeçalhos) = 1356 bytes`.
 
-Vamos calcular a taxa de rede para dois cenários a 30fps:
+Vamos calcular a taxa de rede para cada vídeo do projeto:
 
-**Cenário 1: 720p @ 30fps (Bitrate de vídeo: 3.000 Kbps)**
-
-1.  **Pacotes de dados por segundo:**
-    `3.000.000 bps / 8 bits/byte = 375.000 bytes/s`
-    `375.000 bytes/s / 1316 bytes/pacote ≈ 285 pacotes/s`
-
-2.  **Taxa de transmissão total na rede:**
-    `285 pacotes/s * 1356 bytes/pacote = 386.460 bytes/s`
-    `386.460 bytes/s * 8 bits/byte = 3.091.680 bps ≈` **3.09 Mbps**
-
-**Cenário 2: 1080p @ 30fps (Bitrate de vídeo: 4.500 Kbps)**
+### Taxa de Transmissão para `world.ts`
+*   **FPS:** 30
+*   **Bitrate do vídeo:** 906.294 bps
 
 1.  **Pacotes de dados por segundo:**
-    `4.500.000 bps / 8 bits/byte = 562.500 bytes/s`
-    `562.500 bytes/s / 1316 bytes/pacote ≈ 427 pacotes/s`
+    `906.294 bps / 8 bits/byte = 113.286,75 bytes/s`
+    `113.286,75 bytes/s / 1316 bytes/pacote ≈ 86,08 pacotes/s`
 
 2.  **Taxa de transmissão total na rede:**
-    `427 pacotes/s * 1356 bytes/pacote = 579.012 bytes/s`
-    `579.012 bytes/s * 8 bits/byte = 4.632.096 bps ≈` **4.63 Mbps**
+    `86,08 pacotes/s * 1356 bytes/pacote = 116.709,68 bytes/s`
+    `116.709,68 bytes/s * 8 bits/byte = 933.677,44 bps ≈` **0.93 Mbps**
 
-Portanto, para manter um stream a 30fps, a taxa de transmissão da rede necessária seria de aproximadamente **3.09 Mbps** para qualidade 720p e **4.63 Mbps** para 1080p, considerando o overhead dos protocolos.
+### Taxa de Transmissão para `medium.ts`
+*   **FPS:** 30
+*   **Bitrate do vídeo:** 4.549.750 bps
+
+1.  **Pacotes de dados por segundo:**
+    `4.549.750 bps / 8 bits/byte = 568.718,75 bytes/s`
+    `568.718,75 bytes/s / 1316 bytes/pacote ≈ 432,15 pacotes/s`
+
+2.  **Taxa de transmissão total na rede:**
+    `432,15 pacotes/s * 1356 bytes/pacote = 585.975,90 bytes/s`
+    `585.975,90 bytes/s * 8 bits/byte = 4.687.807,20 bps ≈` **4.69 Mbps**
+
+### Taxa de Transmissão para `istockphoto-2170838017-640_adpp_is.ts`
+*   **FPS:** 25
+*   **Bitrate do vídeo:** 871.897 bps
+
+1.  **Pacotes de dados por segundo:**
+    `871.897 bps / 8 bits/byte = 108.987,125 bytes/s`
+    `108.987,125 bytes/s / 1316 bytes/pacote ≈ 82,82 pacotes/s`
+
+2.  **Taxa de transmissão total na rede:**
+    `82,82 pacotes/s * 1356 bytes/pacote = 112.379,92 bytes/s`
+    `112.379,92 bytes/s * 8 bits/byte = 899.039,36 bps ≈` **0.90 Mbps**
