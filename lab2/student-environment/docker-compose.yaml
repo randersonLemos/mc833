@@ -7,7 +7,7 @@ services:
       - NET_ADMIN
       - NET_RAW
     sysctls:
-      - net.ipv4.ip_forward=1 # Ativa o encaminhamento de pacotes. Ou seja se chegar um pacote que não é pra esse container docker ele redireciona.
+      - net.ipv4.ip_forward=0 # Ativa o encaminhamento de pacotes. Ou seja se chegar um pacote que não é pra esse container docker ele redireciona.
     networks:
       rede_a:
         ipv4_address: 10.0.1.254
@@ -15,7 +15,8 @@ services:
         ipv4_address: 10.0.2.254
     command: bash -c "apt-get update; tail -f /dev/null"
     volumes:
-      - "/tmp/docker_lab_${USER}/roteador:/app"
+      # - "/tmp/docker_lab_${USER}/roteador:/app"
+      - "./roteador:/app"
     working_dir: /app
 
   servidor:
@@ -31,7 +32,7 @@ services:
     # Mantivemos as suas rotas e adicionamos a instalação/inicialização dos serviços
     command: >
       bash -c "apt update; 
-      DEBIAN_FRONTEND=noninteractive apt install -y nginx mariadb-server telnetd xinetd;
+      DEBIAN_FRONTEND=noninteractive apt install -y nginx mariadb-server telnetd xinetd curl telnet;
       echo '[mysqld]' > /etc/mysql/mariadb.conf.d/99-open.cnf;
       echo 'bind-address = 10.0.1.2' >> /etc/mysql/mariadb.conf.d/99-open.cnf;
 
@@ -58,7 +59,8 @@ services:
       ip route add default via 10.0.1.254; 
       tail -f /dev/null"
     volumes:
-      - "/tmp/docker_lab_${USER}/servidor:/app"
+      # - "/tmp/docker_lab_${USER}/servidor:/app"
+      - "./servidor:/app"
     working_dir: /app
 
   cliente:
@@ -74,7 +76,8 @@ services:
     # Por padrão o docker tentar ser o gateway dos containers, para o nosso ambiente funcionar nós mudamos para o getway ser o nosso roteador ;)
     command: bash -c "apt update; apt install -y curl telnet mariadb-client iputils-ping; ip route del default; ip route add default via 10.0.2.254; tail -f /dev/null"
     volumes:
-      - "/tmp/docker_lab_${USER}/cliente:/app"
+      # - "/tmp/docker_lab_${USER}/cliente:/app"
+      - "./cliente:/app"
     working_dir: /app
 
   badguy:
@@ -91,7 +94,8 @@ services:
         ipv4_address: 10.0.2.42
     command: bash -c "ip route del default; ip route add default via 10.0.2.254; tail -f /dev/null"
     volumes:
-      - "/tmp/docker_lab_${USER}/badguy:/app"
+      # - "/tmp/docker_lab_${USER}/badguy:/app"
+      - "./badguy:/app"
     working_dir: /app
 
 networks:

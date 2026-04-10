@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Instala ferramentas de rede, Python e os serviços do servidor
 RUN apt-get update && apt-get install -y \
     python3 python3-pip \
-    iproute2 iputils-ping tcpdump \
+    iproute2 iputils-ping tcpdump curl \
     nginx mysql-server telnetd xinetd ngrep  -y \
     && rm -rf /var/lib/apt/lists/*
 

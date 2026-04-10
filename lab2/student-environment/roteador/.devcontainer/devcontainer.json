@@ -1,0 +1,13 @@
+{
+    "name": "Roteador Dev",
+    "dockerComposeFile": "../../docker-compose.yaml",
+    "service": "roteador",
+    "workspaceFolder": "/app",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python"
+            ]
+        }
+    }
+}
