@@ -1,7 +1,7 @@
 from scapy.all import *
 import sys
 from forward import world2server, server2world
-from firewall import layer_network, layer_transport, rate_limiter
+from firewall import layer_network, layer_transport, layer_application, rate_limiter
 # 1. Interface mapping based on your 'ip addr'
 ETH_SERVER = 'eth0'  # 10.0.1.x network
 ETH_CLIENT = 'eth1'  # 10.0.2.x network
@@ -38,9 +38,10 @@ def roteamento(pkt):
     # FIREWALL INTEGRATION
     # ==========================================
     if not layer_network.filter_packet(pkt) or \
-            not layer_transport.filter_packet(pkt) or \
-            not rate_limiter.filter_packet(pkt):
-        return  # Packet dropped by firewall
+           not layer_transport.filter_packet(pkt) or \
+           not layer_application.filter_packet(pkt) or \
+           not rate_limiter.filter_packet(pkt):
+       return  # Packet dropped by firewall
 
     # ==========================================
     # THE CHECKSUM FIX (CRITICAL FOR DOCKER)
