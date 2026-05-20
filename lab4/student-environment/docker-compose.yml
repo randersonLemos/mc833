@@ -1,0 +1,147 @@
+services:
+  # --- ROTEADORES (Com permissões para manipular rotas e firewall) ---
+  r1_hq:
+    image: nicolaka/netshoot
+    container_name: r1_hq
+    command: tail -f /dev/null
+    cap_add: [NET_ADMIN, NET_RAW]
+    networks:
+      net_gerencia:
+        priority: 100 # Garante que Gerência seja eth0
+      net_servico:
+        priority: 50  # Garante que Sede seja eth1
+    sysctls:
+      - net.ipv4.ip_forward=1
+  r2_br1:
+    image: nicolaka/netshoot
+    container_name: r2_br1
+    command: tail -f /dev/null
+    cap_add: [NET_ADMIN, NET_RAW]
+    networks:
+      net_polo1:
+        priority: 100 # Garante que Polo 1 seja eth0
+      net_servico:
+        priority: 50  # Garante que Sede seja eth1
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+  r3_br2:
+    image: nicolaka/netshoot
+    container_name: r3_br2
+    command: tail -f /dev/null
+    cap_add: [NET_ADMIN, NET_RAW]
+    networks:
+      net_polo2:
+        priority: 100 # Garante que Polo 2 seja eth0
+      net_servico:
+        priority: 50  # Garante que Sede seja eth1
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+  r4_edge:
+    image: nicolaka/netshoot
+    container_name: r4_edge
+    command: tail -f /dev/null
+    cap_add: [NET_ADMIN, NET_RAW]
+    networks:
+      net_internet:
+        priority: 100 # Garante que Internet seja eth0
+      net_servico:
+        priority: 50  # Garante que Sede seja eth1
+    sysctls:
+      - net.ipv4.ip_forward=1
+
+  # --- DISPOSITIVOS FINAIS (Sem IPs configurados) ---
+  srv_dns:
+    image: nicolaka/netshoot
+    container_name: srv_dns
+    command: tail -f /dev/null
+    cap_add: [NET_ADMIN, NET_RAW]
+    networks: [net_servico]
+  srv_web:
+    image: nicolaka/netshoot
+    container_name: srv_web
+    command: tail -f /dev/null
+    cap_add: [NET_ADMIN, NET_RAW]
+    networks: [net_servico]
+  srv_db:
+    image: nicolaka/netshoot
+    container_name: srv_db
+    cap_add: [NET_ADMIN, NET_RAW]
+    command: tail -f /dev/null
+    networks: [net_servico]
+
+
+  # ---- USUÁRIOS ----
+  # ---- Polo 1
+  pc1_br1:
+    image: nicolaka/netshoot
+    container_name: pc1_br1
+    command: tail -f /dev/null
+    cap_add: [NET_ADMIN, NET_RAW]
+    networks: [net_polo1]
+
+  pc2_br1:
+    image: nicolaka/netshoot
+    container_name: pc2_br1
+    cap_add: [NET_ADMIN, NET_RAW]
+    command: tail -f /dev/null
+    networks: [net_polo1]
+  
+  pc3_br1:
+    image: nicolaka/netshoot
+    container_name: pc3_br1
+    cap_add: [NET_ADMIN, NET_RAW]
+    command: tail -f /dev/null
+    networks: [net_polo1]
+  # --- Polo 2  
+  pc1_br2:
+    image: nicolaka/netshoot
+    container_name: pc1_br2
+    cap_add: [NET_ADMIN, NET_RAW]
+    command: tail -f /dev/null
+    networks: [net_polo2]
+
+  pc2_br2:
+    image: nicolaka/netshoot
+    container_name: pc2_br2
+    command: tail -f /dev/null
+    cap_add: [NET_ADMIN, NET_RAW]
+    networks: [net_polo2]
+
+  pc3_br2:
+    image: nicolaka/netshoot
+    container_name: pc3_br2
+    cap_add: [NET_ADMIN, NET_RAW]
+    command: tail -f /dev/null
+    networks: [net_polo2]
+
+  # === INTERNET ===
+  ext_client:
+    image: nicolaka/netshoot
+    container_name: ext_client
+    cap_add: [NET_ADMIN, NET_RAW]
+    command: tail -f /dev/null
+    networks: [net_internet]
+  
+  srv_public_web:
+    image: nicolaka/netshoot
+    container_name: srv_public_web
+    cap_add: [NET_ADMIN, NET_RAW]
+    command: tail -f /dev/null
+    networks: [net_internet]
+  # --- adm
+  admin_pc:
+    image: nicolaka/netshoot
+    container_name: admin_pc
+    cap_add: [NET_ADMIN, NET_RAW]
+    command: tail -f /dev/null
+    networks: [net_gerencia]
+
+networks:
+  # Redes isoladas para forçar o roteamento pelo r1_hq
+  net_servico: { driver: bridge }
+  net_polo1: { driver: bridge }
+  net_polo2: { driver: bridge }
+  net_gerencia: { driver: bridge }
+  net_internet: { driver: bridge }
