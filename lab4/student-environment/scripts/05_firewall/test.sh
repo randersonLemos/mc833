@@ -80,13 +80,11 @@ echo "  └───────────────────────
 echo ""
 
 echo "  [Polo 1 → Allowed destinations]"
-expect_pass pc1_br1 192.168.100.10 "srv_dns" "Polo 1 must reach DNS (explicitly allowed by policy)"
 expect_pass pc1_br1 192.168.100.11 "srv_web" "Polo 1 must reach web server"
 expect_pass pc1_br1 203.0.113.10   "srv_pub" "Polo 1 must reach internet via NAT"
 
 echo "  [Polo 2 → Allowed destinations]"
-expect_pass pc1_br2 192.168.100.10 "srv_dns" "Polo 2 must reach DNS"
-expect_pass pc1_br2 192.168.100.11 "srv_web" "Polo 2 must reach web server (explicitly allowed by policy)"
+expect_pass pc1_br2 192.168.100.11 "srv_web" "Polo 2 must reach web server"
 expect_pass pc1_br2 203.0.113.10   "srv_pub" "Polo 2 must reach internet via NAT"
 
 # ── Must BLOCK ────────────────────────────────────────────────
@@ -104,6 +102,10 @@ echo "  [Polos → srv_db]"
 expect_block pc1_br1 192.168.100.12 "srv_db" "r2_br1 drops src=polo1 dst=srv_db"
 expect_block pc1_br2 192.168.100.12 "srv_db" "r3_br2 drops src=polo2 dst=srv_db"
 
+echo "  [Polos → srv_dns]"
+expect_block pc1_br1 192.168.100.10 "srv_dns" "r2_br1 drops src=polo1 dst=srv_dns"
+expect_block pc1_br2 192.168.100.10 "srv_dns" "r3_br2 drops src=polo2 dst=srv_dns"
+
 echo "  [Polos → net_gerencia]"
 expect_block pc1_br1 192.168.100.194 "admin_pc" "r2_br1 drops src=polo1 dst=gerencia"
 expect_block pc1_br2 192.168.100.194 "admin_pc" "r3_br2 drops src=polo2 dst=gerencia"
@@ -114,6 +116,9 @@ expect_block admin_pc 192.168.100.130 "pc1_br2" "r1_hq drops src=gerencia dst=po
 
 echo "  [gerencia → srv_db]"
 expect_block admin_pc 192.168.100.12 "srv_db" "r1_hq drops src=gerencia dst=srv_db"
+
+echo "  [gerencia → srv_dns]"
+expect_block admin_pc 192.168.100.10 "srv_dns" "r1_hq drops src=gerencia dst=srv_dns"
 
 echo "  [Internet → internal (stateful)]"
 expect_block ext_client 192.168.100.66  "pc1_br1" "r4_edge drops NEW connection from eth0 to Polo 1"

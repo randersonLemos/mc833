@@ -7,9 +7,9 @@ services:
     cap_add: [NET_ADMIN, NET_RAW]
     networks:
       net_gerencia:
-        priority: 100 # Garante que Gerência seja eth0
+        priority: 1000 # Garante que Gerência seja eth0
       net_servico:
-        priority: 50  # Garante que Sede seja eth1
+        priority: 1    # Garante que Sede seja eth1
     sysctls:
       - net.ipv4.ip_forward=1
   r2_br1:
@@ -19,9 +19,9 @@ services:
     cap_add: [NET_ADMIN, NET_RAW]
     networks:
       net_polo1:
-        priority: 100 # Garante que Polo 1 seja eth0
+        priority: 1000 # Garante que Polo 1 seja eth0
       net_servico:
-        priority: 50  # Garante que Sede seja eth1
+        priority: 1    # Garante que Sede seja eth1
     sysctls:
       - net.ipv4.ip_forward=1
 
@@ -32,9 +32,9 @@ services:
     cap_add: [NET_ADMIN, NET_RAW]
     networks:
       net_polo2:
-        priority: 100 # Garante que Polo 2 seja eth0
+        priority: 1000 # Garante que Polo 2 seja eth0
       net_servico:
-        priority: 50  # Garante que Sede seja eth1
+        priority: 1    # Garante que Sede seja eth1
     sysctls:
       - net.ipv4.ip_forward=1
 
@@ -45,9 +45,9 @@ services:
     cap_add: [NET_ADMIN, NET_RAW]
     networks:
       net_internet:
-        priority: 100 # Garante que Internet seja eth0
+        priority: 1000 # Garante que Internet seja eth0
       net_servico:
-        priority: 50  # Garante que Sede seja eth1
+        priority: 1    # Garante que Sede seja eth1
     sysctls:
       - net.ipv4.ip_forward=1
 

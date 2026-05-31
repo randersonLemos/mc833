@@ -9,6 +9,12 @@
 # Rule order matters — iptables processes top to bottom and
 # stops at the first match. ESTABLISHED,RELATED always comes
 # first so replies are never caught by a DROP rule below.
+#
+# Security policy summary:
+#   - Block Polo 1 ↔ Polo 2 (bidirectional)
+#   - Block Polos and gerencia from srv_db and srv_dns
+#   - Block Polos and gerencia from each other
+#   - Block internet from initiating NEW connections inward
 # =============================================================
 
 run_cmd() {
@@ -61,6 +67,9 @@ run_cmd "Rule #3 — block Polo 1 → srv_db: database must not be reachable fro
 run_cmd "Rule #4 — block Polo 1 → net_gerencia: management network must be isolated from branches" \
     docker exec r2_br1 iptables -A FORWARD -s 192.168.100.64/26 -d 192.168.100.192/26 -j DROP
 
+run_cmd "Rule #5 — block Polo 1 → srv_dns: DNS server must not be reachable from branches" \
+    docker exec r2_br1 iptables -A FORWARD -s 192.168.100.64/26 -d 192.168.100.10 -j DROP
+
 # ── r3_br2 — Polo 2 gateway ───────────────────────────────────
 echo ""
 echo "  ┌─ [r3_br2] Polo 2 Gateway ────────────────────────────┐"
@@ -80,6 +89,9 @@ run_cmd "Rule #3 — block Polo 2 → srv_db: database must not be reachable fro
 
 run_cmd "Rule #4 — block Polo 2 → net_gerencia: management network must be isolated from branches" \
     docker exec r3_br2 iptables -A FORWARD -s 192.168.100.128/26 -d 192.168.100.192/26 -j DROP
+
+run_cmd "Rule #5 — block Polo 2 → srv_dns: DNS server must not be reachable from branches" \
+    docker exec r3_br2 iptables -A FORWARD -s 192.168.100.128/26 -d 192.168.100.10 -j DROP
 
 # ── r1_hq — Gerencia gateway ──────────────────────────────────
 echo ""
@@ -101,6 +113,9 @@ run_cmd "Rule #3 — block gerencia → Polo 2: management must not access branc
 run_cmd "Rule #4 — block gerencia → srv_db: database must not be reachable from management either" \
     docker exec r1_hq iptables -A FORWARD -s 192.168.100.192/26 -d 192.168.100.12 -j DROP
 
+run_cmd "Rule #5 — block gerencia → srv_dns: DNS server must not be reachable from management either" \
+    docker exec r1_hq iptables -A FORWARD -s 192.168.100.192/26 -d 192.168.100.10 -j DROP
+
 # ── r4_edge — Stateful internet firewall ──────────────────────
 echo ""
 echo "  ┌─ [r4_edge] Stateful Internet Firewall ───────────────┐"
@@ -110,11 +125,16 @@ echo "  │  replies come back in via ESTABLISHED,RELATED.       │"
 echo "  └──────────────────────────────────────────────────────┘"
 echo ""
 
+R4_INTERNET=$(docker exec r4_edge ip addr show \
+    | awk '/^[0-9]+:/ { split($2,a,"@"); iface=a[1]; gsub(/:$/,"",iface) }
+           /inet / && $2 ~ /203\.0\.113/ { print iface }')
+printf "    Detected: net_internet interface on r4_edge = %s\n\n" "$R4_INTERNET"
+
 run_cmd "Rule #1 — must be first: allow replies to connections that internal hosts already opened" \
     docker exec r4_edge iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-run_cmd "Rule #2 — block internet → internal: drop any NEW connection arriving from eth0 (internet side)" \
-    docker exec r4_edge iptables -A FORWARD -i eth0 -m state --state NEW -j DROP
+run_cmd "Rule #2 — block internet → internal: drop any NEW connection arriving from $R4_INTERNET (internet side)" \
+    docker exec r4_edge iptables -A FORWARD -i "$R4_INTERNET" -m state --state NEW -j DROP
 
 echo "============================================================"
 echo "  Firewall rules applied."

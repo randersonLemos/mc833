@@ -23,7 +23,7 @@ Este laboratório cobre:
 
 | Origem     | Destino                        | Deve funcionar? |
 |------------|--------------------------------|-----------------|
-| Polo 1     | Servidor DNS (`srv_dns`)       | Sim             |
+| Polo 1     | Servidor Web (`srv_web`) HTTP  | Sim             |
 | Polo 2     | Servidor Web (`srv_web`) HTTP  | Sim             |
 | Polo 1 e 2 | Internet pública (`203.0.113.10`) via NAT | Sim  |
 
@@ -34,8 +34,11 @@ Este laboratório cobre:
 | Polo 1            | Polo 2               | Não — bloqueio bidirecional |
 | Polo 2            | Polo 1               | Não — bloqueio bidirecional |
 | Qualquer Polo     | Banco de Dados (`srv_db`) | Não        |
+| Qualquer Polo     | Servidor DNS (`srv_dns`)  | Não        |
 | Qualquer Polo     | Gerência (`net_gerencia`) | Não        |
 | admin_pc          | Qualquer Polo        | Não             |
+| admin_pc          | Banco de Dados (`srv_db`) | Não        |
+| admin_pc          | Servidor DNS (`srv_dns`)  | Não        |
 | Internet          | Redes internas       | Não — apenas novas conexões bloqueadas |
 | Redes internas    | Internet             | Sim — respostas permitidas (stateful) |
 
@@ -56,10 +59,10 @@ net_servico (192.168.100.0/26)
 ├── srv_web  .11
 ├── srv_db   .12
 │
-├── r1_hq  eth1:.1 ──── eth0:.193 ──── net_gerencia (192.168.100.192/26)
+├── r1_hq  eth0:.1 ──── eth1:.193 ──── net_gerencia (192.168.100.192/26)
 │                                       └── admin_pc .194
 │
-├── r2_br1 eth1:.2 ──── eth0:.65  ──── net_polo1 (192.168.100.64/26)
+├── r2_br1 eth0:.2 ──── eth1:.65  ──── net_polo1 (192.168.100.64/26)
 │                                       ├── pc1_br1 .66
 │                                       ├── pc2_br1 .67
 │                                       └── pc3_br1 .68
@@ -90,7 +93,7 @@ Rede central. Todos os roteadores conectam aqui. Servidores corporativos residem
 | Endereço            | Papel                                       |
 |---------------------|---------------------------------------------|
 | 192.168.100.0       | Network ID — não pode ser atribuído         |
-| 192.168.100.1       | Gateway — atribuído ao `eth1` dos roteadores|
+| 192.168.100.1       | Gateway — atribuído ao `eth0` de r1_hq e r2_br1, `eth1` de r3_br2 e r4_edge|
 | 192.168.100.2 – .62 | Range utilizável                            |
 | 192.168.100.63      | Broadcast                                   |
 
@@ -103,7 +106,7 @@ Rede isolada da primeira filial (`pc1_br1`, `pc2_br1`, `pc3_br1`).
 | Endereço              | Papel                                       |
 |-----------------------|---------------------------------------------|
 | 192.168.100.64        | Network ID — não pode ser atribuído         |
-| 192.168.100.65        | Gateway — atribuído ao `eth0` do `r2_br1`   |
+| 192.168.100.65        | Gateway — atribuído ao `eth1` do `r2_br1`   |
 | 192.168.100.66 – .126 | Range utilizável                            |
 | 192.168.100.127       | Broadcast                                   |
 
@@ -129,7 +132,7 @@ Rede altamente restrita. Apenas `admin_pc` reside aqui.
 | Endereço               | Papel                                       |
 |------------------------|---------------------------------------------|
 | 192.168.100.192        | Network ID — não pode ser atribuído         |
-| 192.168.100.193        | Gateway — atribuído ao `eth0` do `r1_hq`    |
+| 192.168.100.193        | Gateway — atribuído ao `eth1` do `r1_hq`    |
 | 192.168.100.194 – .254 | Range utilizável                            |
 | 192.168.100.255        | Broadcast                                   |
 
@@ -149,8 +152,8 @@ Rede altamente restrita. Apenas `admin_pc` reside aqui.
 
 | Dispositivo    | IP                          | Rede               | Função                    |
 |----------------|-----------------------------|--------------------|---------------------------|
-| r1_hq          | 192.168.100.1 / .193        | servico / gerencia | Roteador principal        |
-| r2_br1         | 192.168.100.2 / .65         | servico / polo1    | Roteador da Filial 1      |
+| r1_hq          | 192.168.100.1 (eth0) / .193 (eth1) | servico / gerencia | Roteador principal  |
+| r2_br1         | 192.168.100.2 (eth0) / .65 (eth1)  | servico / polo1    | Roteador da Filial 1|
 | r3_br2         | 192.168.100.3 / .129        | servico / polo2    | Roteador da Filial 2      |
 | r4_edge        | 192.168.100.4 / 203.0.113.1 | servico / internet | Roteador de borda (NAT)   |
 | srv_dns        | 192.168.100.10              | net_servico        | Servidor DNS              |
@@ -497,15 +500,17 @@ docker exec r4_edge iptables -A FORWARD -i eth0 -m state --state NEW -j DROP
 
 | Origem | Destino | Estado final |
 |---|---|---|
-| pc1_br1 | srv_dns (.10) | Alcança |
+| pc1_br1 | srv_web (.11) | Alcança |
 | pc1_br2 | srv_web (.11) | Alcança |
 | pc*_br1/2 | Internet (203.0.113.10) | Alcança via NAT |
 | pc1_br1 | pc1_br2 | Bloqueado (DROP em r2_br1) |
 | pc1_br2 | pc1_br1 | Bloqueado (DROP em r3_br2) |
 | qualquer polo | srv_db (.12) | Bloqueado (DROP em r2_br1 / r3_br2) |
+| qualquer polo | srv_dns (.10) | Bloqueado (DROP em r2_br1 / r3_br2) |
 | qualquer polo | admin_pc (.194) | Bloqueado (DROP em r2_br1 / r3_br2) |
 | admin_pc | qualquer polo | Bloqueado (DROP em r1_hq) |
 | admin_pc | srv_db (.12) | Bloqueado (DROP em r1_hq) |
+| admin_pc | srv_dns (.10) | Bloqueado (DROP em r1_hq) |
 | ext_client | qualquer interno | Bloqueado (DROP NEW em r4_edge) |
 | interno | ext_client (resposta) | Permitido (ESTABLISHED,RELATED) |
 
@@ -514,7 +519,8 @@ docker exec r4_edge iptables -A FORWARD -i eth0 -m state --state NEW -j DROP
 ## Checklist antes de submeter
 
 - [ ] Os polos não conseguem comunicar entre si
-- [ ] Os polos e adm não conseguem acessar o banco de dados
+- [ ] Os polos e adm não conseguem acessar o banco de dados (`srv_db`)
+- [ ] Os polos e adm não conseguem acessar o servidor DNS (`srv_dns`)
 - [ ] Os polos não conseguem comunicar com adm e vice-versa
 - [ ] Os polos conseguem se comunicar com a internet
 - [ ] A internet não consegue iniciar comunicação com os polos

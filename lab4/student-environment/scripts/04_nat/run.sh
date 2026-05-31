@@ -53,8 +53,13 @@ echo "  │  -j MASQUERADE  : rewrite src IP to interface IP      │"
 echo "  └──────────────────────────────────────────────────────┘"
 echo ""
 
-run_cmd "Enable MASQUERADE on eth0 so all internal hosts can reach the internet using r4_edge's public IP" \
-    docker exec r4_edge iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+R4_INTERNET=$(docker exec r4_edge ip addr show \
+    | awk '/^[0-9]+:/ { split($2,a,"@"); iface=a[1]; gsub(/:$/,"",iface) }
+           /inet / && $2 ~ /203\.0\.113/ { print iface }')
+printf "    Detected: net_internet interface on r4_edge = %s\n\n" "$R4_INTERNET"
+
+run_cmd "Enable MASQUERADE on $R4_INTERNET so all internal hosts can reach the internet using r4_edge's public IP" \
+    docker exec r4_edge iptables -t nat -A POSTROUTING -o "$R4_INTERNET" -j MASQUERADE
 
 echo "============================================================"
 echo "  NAT configured."

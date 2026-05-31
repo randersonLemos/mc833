@@ -10,7 +10,7 @@ SCRIPTS_DIR="$(dirname "$0")/scripts"
 
 echo ""
 echo "============================================================"
-echo "  Corporate Network Setup"
+echo "  Configuração da Rede Corporativa"
 echo "============================================================"
 
 bash "$SCRIPTS_DIR/01_routers/run.sh"
@@ -30,5 +30,5 @@ bash "$SCRIPTS_DIR/05_firewall/test.sh"
 
 echo ""
 echo "============================================================"
-echo "  Setup and all tests complete."
+echo "  Configuração concluída. Todos os testes passaram."
 echo "============================================================"

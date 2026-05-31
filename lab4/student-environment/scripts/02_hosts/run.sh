@@ -47,7 +47,7 @@ echo ""
 
 run_cmd "Remove Docker's auto-assigned IP from srv_dns" \
     docker exec srv_dns ip addr flush dev eth0
-run_cmd "Assign static IP to srv_dns — Polo 1 is allowed to reach this server on port 53" \
+run_cmd "Assign static IP to srv_dns — access will be restricted by firewall rules in step 5" \
     docker exec srv_dns ip addr add 192.168.100.10/26 dev eth0
 
 run_cmd "Remove Docker's auto-assigned IP from srv_web" \
