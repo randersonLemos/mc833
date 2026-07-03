@@ -1,0 +1,5 @@
+  python3 -c "import sys; sys.stdout.buffer.write(b'AAAABBBBCCCCDDDDEEEE' + b'\x00')" >  payload_1_sem_overflow.bin
+
+  python3 -c "import sys; sys.stdout.buffer.write(b'X'*49 + b'\x00')" > payload_2_encaixe_exato.bin
+
+  python3 -c "import sys; sys.stdout.buffer.write(b'A'*8 + b'B'*8 + b'C'*8 + b'D'*8 + b'E'*8 + b'F'*8 + b'G'*8 + b'H'*8 + b'I'*8 + b'J'*8 + b'\x00')" > payload_3_overflow.bin
