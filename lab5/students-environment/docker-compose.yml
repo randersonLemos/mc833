@@ -44,14 +44,14 @@ services:
 
   # ---------- ATACANTE ----------
   atacante:
-    build: ./shellcode
+    build: ./atacante
     image: morris-atacante
     container_name: atacante
     cap_add: [NET_ADMIN, NET_RAW]
     security_opt:
       - seccomp:unconfined
     volumes:
-      - ./shellcode:/workspace
+      - ./atacante:/workspace
     tty: true
     stdin_open: true
     networks:

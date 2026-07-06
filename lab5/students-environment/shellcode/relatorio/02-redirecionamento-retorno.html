@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>02-redirecionamento-retorno.md</title>
+<meta http-equiv="Content-type" content="text/html;charset=UTF-8">
+
+<style>
+/* https://github.com/microsoft/vscode/blob/master/extensions/markdown-language-features/media/markdown.css */
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+body {
+	font-family: var(--vscode-markdown-font-family, -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif);
+	font-size: var(--vscode-markdown-font-size, 14px);
+	padding: 0 26px;
+	line-height: var(--vscode-markdown-line-height, 22px);
+	word-wrap: break-word;
+}
+
+#code-csp-warning {
+	position: fixed;
+	top: 0;
+	right: 0;
+	color: white;
+	margin: 16px;
+	text-align: center;
+	font-size: 12px;
+	font-family: sans-serif;
+	background-color:#444444;
+	cursor: pointer;
+	padding: 6px;
+	box-shadow: 1px 1px 1px rgba(0,0,0,.25);
+}
+
+#code-csp-warning:hover {
+	text-decoration: none;
+	background-color:#007acc;
+	box-shadow: 2px 2px 2px rgba(0,0,0,.25);
+}
+
+body.scrollBeyondLastLine {
+	margin-bottom: calc(100vh - 22px);
+}
+
+body.showEditorSelection .code-line {
+	position: relative;
+}
+
+body.showEditorSelection .code-active-line:before,
+body.showEditorSelection .code-line:hover:before {
+	content: "";
+	display: block;
+	position: absolute;
+	top: 0;
+	left: -12px;
+	height: 100%;
+}
+
+body.showEditorSelection li.code-active-line:before,
+body.showEditorSelection li.code-line:hover:before {
+	left: -30px;
+}
+
+.vscode-light.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.15);
+}
+
+.vscode-light.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(0, 0, 0, 0.40);
+}
+
+.vscode-light.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-dark.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.4);
+}
+
+.vscode-dark.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 255, 255, 0.60);
+}
+
+.vscode-dark.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+.vscode-high-contrast.showEditorSelection .code-active-line:before {
+	border-left: 3px solid rgba(255, 160, 0, 0.7);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line:hover:before {
+	border-left: 3px solid rgba(255, 160, 0, 1);
+}
+
+.vscode-high-contrast.showEditorSelection .code-line .code-line:hover:before {
+	border-left: none;
+}
+
+img {
+	max-width: 100%;
+	max-height: 100%;
+}
+
+a {
+	text-decoration: none;
+}
+
+a:hover {
+	text-decoration: underline;
+}
+
+a:focus,
+input:focus,
+select:focus,
+textarea:focus {
+	outline: 1px solid -webkit-focus-ring-color;
+	outline-offset: -1px;
+}
+
+hr {
+	border: 0;
+	height: 2px;
+	border-bottom: 2px solid;
+}
+
+h1 {
+	padding-bottom: 0.3em;
+	line-height: 1.2;
+	border-bottom-width: 1px;
+	border-bottom-style: solid;
+}
+
+h1, h2, h3 {
+	font-weight: normal;
+}
+
+table {
+	border-collapse: collapse;
+}
+
+table > thead > tr > th {
+	text-align: left;
+	border-bottom: 1px solid;
+}
+
+table > thead > tr > th,
+table > thead > tr > td,
+table > tbody > tr > th,
+table > tbody > tr > td {
+	padding: 5px 10px;
+}
+
+table > tbody > tr + tr > td {
+	border-top: 1px solid;
+}
+
+blockquote {
+	margin: 0 7px 0 5px;
+	padding: 0 16px 0 10px;
+	border-left-width: 5px;
+	border-left-style: solid;
+}
+
+code {
+	font-family: Menlo, Monaco, Consolas, "Droid Sans Mono", "Courier New", monospace, "Droid Sans Fallback";
+	font-size: 1em;
+	line-height: 1.357em;
+}
+
+body.wordWrap pre {
+	white-space: pre-wrap;
+}
+
+pre:not(.hljs),
+pre.hljs code > div {
+	padding: 16px;
+	border-radius: 3px;
+	overflow: auto;
+}
+
+pre code {
+	color: var(--vscode-editor-foreground);
+	tab-size: 4;
+}
+
+/** Theming */
+
+.vscode-light pre {
+	background-color: rgba(220, 220, 220, 0.4);
+}
+
+.vscode-dark pre {
+	background-color: rgba(10, 10, 10, 0.4);
+}
+
+.vscode-high-contrast pre {
+	background-color: rgb(0, 0, 0);
+}
+
+.vscode-high-contrast h1 {
+	border-color: rgb(0, 0, 0);
+}
+
+.vscode-light table > thead > tr > th {
+	border-color: rgba(0, 0, 0, 0.69);
+}
+
+.vscode-dark table > thead > tr > th {
+	border-color: rgba(255, 255, 255, 0.69);
+}
+
+.vscode-light h1,
+.vscode-light hr,
+.vscode-light table > tbody > tr + tr > td {
+	border-color: rgba(0, 0, 0, 0.18);
+}
+
+.vscode-dark h1,
+.vscode-dark hr,
+.vscode-dark table > tbody > tr + tr > td {
+	border-color: rgba(255, 255, 255, 0.18);
+}
+
+</style>
+
+<style>
+/* Tomorrow Theme */
+/* http://jmblog.github.com/color-themes-for-google-code-highlightjs */
+/* Original theme - https://github.com/chriskempson/tomorrow-theme */
+
+/* Tomorrow Comment */
+.hljs-comment,
+.hljs-quote {
+	color: #8e908c;
+}
+
+/* Tomorrow Red */
+.hljs-variable,
+.hljs-template-variable,
+.hljs-tag,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-regexp,
+.hljs-deletion {
+	color: #c82829;
+}
+
+/* Tomorrow Orange */
+.hljs-number,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-literal,
+.hljs-type,
+.hljs-params,
+.hljs-meta,
+.hljs-link {
+	color: #f5871f;
+}
+
+/* Tomorrow Yellow */
+.hljs-attribute {
+	color: #eab700;
+}
+
+/* Tomorrow Green */
+.hljs-string,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition {
+	color: #718c00;
+}
+
+/* Tomorrow Blue */
+.hljs-title,
+.hljs-section {
+	color: #4271ae;
+}
+
+/* Tomorrow Purple */
+.hljs-keyword,
+.hljs-selector-tag {
+	color: #8959a8;
+}
+
+.hljs {
+	display: block;
+	overflow-x: auto;
+	color: #4d4d4c;
+	padding: 0.5em;
+}
+
+.hljs-emphasis {
+	font-style: italic;
+}
+
+.hljs-strong {
+	font-weight: bold;
+}
+</style>
+
+<style>
+/*
+ * Markdown PDF CSS
+ */
+
+ body {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", "Ubuntu", "Droid Sans", sans-serif, "Meiryo";
+	padding: 0 12px;
+}
+
+pre {
+	background-color: #f8f8f8;
+	border: 1px solid #cccccc;
+	border-radius: 3px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+	overflow-wrap: break-word;
+}
+
+pre:not(.hljs) {
+	padding: 23px;
+	line-height: 19px;
+}
+
+blockquote {
+	background: rgba(127, 127, 127, 0.1);
+	border-color: rgba(0, 122, 204, 0.5);
+}
+
+.emoji {
+	height: 1.4em;
+}
+
+code {
+	font-size: 14px;
+	line-height: 19px;
+}
+
+/* for inline code */
+:not(pre):not(.hljs) > code {
+	color: #C9AE75; /* Change the old color so it seems less like an error */
+	font-size: inherit;
+}
+
+/* Page Break : use <div class="page"/> or <div class="page"></div> to insert page break
+-------------------------------------------------------- */
+.page {
+	page-break-after: always;
+}
+
+</style>
+
+<script src="https://unpkg.com/mermaid/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.body.classList.contains('vscode-dark') || document.body.classList.contains('vscode-high-contrast')
+          ? 'dark'
+          : 'default'
+    });
+  </script>
+<p>I# Relatório — Lab 5 (MC833): Redirecionando o endereço de retorno para dentro de <code>input</code></p>
+<h2 id="por-que-não-basta-sobrescrever-o-retorno-com-qualquer-endereço">Por que não basta sobrescrever o retorno com qualquer endereço</h2>
+<p>A seção anterior (<a href="01-analise-stack-gdb-gef.md">01-analise-stack-gdb-gef.md</a>) mostrou
+que os bytes 72–79 do payload caem exatamente sobre o <strong>endereço de retorno salvo</strong>
+no frame de <code>bof</code>. Só sobrescrever esse endereço não é suficiente — é preciso que ele
+aponte para um lugar na memória onde exista <em>código executável útil</em> (o nosso
+shellcode).</p>
+<p>O candidato óbvio seria apontar de volta para dentro do próprio <code>buffer</code> (onde,
+supostamente, o payload também estaria). O problema é que <code>strcpy</code> <strong>para de copiar
+no primeiro byte <code>\x00</code></strong> que encontrar na origem (<code>str</code>). O shellcode gerado por
+<code>create_hex_command()</code> contém bytes <code>\x00</code> no meio (por exemplo, nas instruções
+<code>mov rax, imm64</code> cujos imediatos têm bytes altos zerados, como em <code>0x632d</code> para
+<code>&quot;-c\0&quot;</code>). Isso significa que, se o shellcode estivesse posicionado nos bytes que o
+<code>strcpy</code> efetivamente copia, ele seria <strong>truncado</strong> no meio — o <code>strcpy</code> simplesmente
+pararia de escrever ao encontrar o primeiro <code>\x00</code> do shellcode, e o restante do
+buffer de destino nunca seria preenchido com o que vem depois.</p>
+<p>A saída foi não depender do <code>strcpy</code> para colocar o shellcode em memória. O
+shellcode fica em <code>input[]</code>, dentro do frame de <code>main</code> — array que foi preenchido
+<strong>diretamente pelo <code>read(STDIN_FILENO, input, 500)</code></strong>, não pelo <code>strcpy</code>. Diferença
+crucial: <code>read()</code> copia exatamente os <code>n</code> bytes pedidos, byte a byte, <strong>sem se
+importar com <code>\x00</code></strong> — não é uma função de string, não tem conceito de
+terminador. Então o shellcode inteiro (com seus <code>\x00</code> internos) chega intacto em
+<code>input</code>, mesmo que o mesmo conteúdo, se copiado via <code>strcpy</code>, fosse cortado no meio.</p>
+<p>Ou seja: usamos o <code>strcpy</code> só para o que ele <em>precisa</em> fazer (sobrescrever os 8
+bytes do endereço de retorno, que ficam bem no início do payload, antes de qualquer
+<code>\x00</code>) e usamos o <code>read()</code> — que já rodou antes, no <code>main</code>, e não tem essa
+limitação — para colocar o shellcode de forma confiável em <code>input</code>. O retorno é então
+redirecionado para dentro de <code>input</code>, não para dentro de <code>buffer</code>.</p>
+<h2 id="o-código-do-offset-getfile-em-shellcodemainpy">O código do offset (<code>getFile()</code>, em <code>shellcode/main.py</code>)</h2>
+<pre class="hljs"><code><div><span class="hljs-keyword">def</span> <span class="hljs-title function_">getFile</span>(<span class="hljs-params">bufaddr, shellcode</span>):
+    <span class="hljs-string">&quot;&quot;&quot;
+    Layout do payload (500 bytes, = tamanho de `input` em main):
+
+      [0:72)     preenchimento (NOP) -- nunca é executado, só precisa nao ter \x00
+      [72:80)    endereco de retorno -- aponta para dentro de `input` (main),
+                 onde o NOP sled + shellcode ficam intactos (o read() nao trunca em \0,
+                 diferente do strcpy que soh alcanca ateh aqui)
+      [80:100)   NOP sled
+      [100:...)  shellcode (create_hex_command, sem alteracao)
+    &quot;&quot;&quot;</span>
+    OFFSET = <span class="hljs-number">72</span>                        <span class="hljs-comment"># distancia confirmada via GDB: buffer -&gt; retorno</span>
+    INPUT_OFFSET_FROM_BUFFER = <span class="hljs-number">0x50</span>    <span class="hljs-comment"># distancia fixa entre buffer (bof) e input (main)</span>
+    SHELL_START = <span class="hljs-number">100</span>
+
+    content = <span class="hljs-built_in">bytearray</span>(<span class="hljs-number">0x90</span> <span class="hljs-keyword">for</span> _ <span class="hljs-keyword">in</span> <span class="hljs-built_in">range</span>(<span class="hljs-number">500</span>))
+    content[SHELL_START:SHELL_START + <span class="hljs-built_in">len</span>(shellcode)] = shellcode
+
+    input_addr = bufaddr + INPUT_OFFSET_FROM_BUFFER
+    ret = input_addr + <span class="hljs-number">80</span>              <span class="hljs-comment"># aponta pro comeco do NOP sled, dentro de `input`</span>
+
+    content[OFFSET:OFFSET + <span class="hljs-number">8</span>] = ret.to_bytes(<span class="hljs-number">8</span>, byteorder=<span class="hljs-string">&quot;little&quot;</span>)
+
+    <span class="hljs-keyword">return</span> content
+</div></code></pre>
+<h3 id="o-que-cada-constante-representa">O que cada constante representa</h3>
+<ul>
+<li>
+<p><strong><code>OFFSET = 72</code></strong> — a distância, em bytes, do início de <code>buffer</code> até o endereço
+de retorno salvo na pilha de <code>bof</code>. Confirmada estaticamente (via
+<code>disassemble</code>) e depois experimentalmente (payloads de teste na seção 01):
+<code>0x48 = 72</code>.</p>
+</li>
+<li>
+<p><strong><code>INPUT_OFFSET_FROM_BUFFER = 0x50</code></strong> — a distância fixa, em bytes, entre o
+endereço de <code>buffer</code> (dentro do frame de <code>bof</code>) e o endereço de <code>input</code> (dentro
+do frame de <code>main</code>). Como os dois frames têm layout fixo (mesmo binário, sem
+ASLR entre <code>buffer</code> e <code>input</code> — só a base do processo varia, não a distância
+relativa entre variáveis locais), essa distância também foi medida ao vivo no
+GDB comparando os dois endereços, e é constante entre execuções.</p>
+</li>
+<li>
+<p><strong><code>SHELL_START = 100</code></strong> — onde, dentro dos 500 bytes do payload, o shellcode
+de fato começa. Entre o byte 80 (logo depois do endereço de retorno) e o byte
+100 fica um <em>NOP sled</em> de 20 bytes (<code>0x90</code>), uma margem de segurança para o
+salto não precisar ser cirurgicamente exato.</p>
+</li>
+<li>
+<p><strong><code>bufaddr</code></strong> — não é uma constante; é o endereço real de <code>buffer</code> <strong>vazado
+pelo próprio servidor</strong> a cada conexão (o <code>printf(&quot;[INFO LEAK] ...&quot;)</code> em
+<code>server.c</code>). O exploit lê esse valor de uma conexão de sondagem antes de mandar
+o payload de verdade, e usa-o para calcular os endereços abaixo dinamicamente.</p>
+</li>
+</ul>
+<h3 id="o-cálculo-do-novo-endereço-de-retorno">O cálculo do novo endereço de retorno</h3>
+<pre class="hljs"><code><div>input_addr = bufaddr + INPUT_OFFSET_FROM_BUFFER   <span class="hljs-comment"># endereço de `input`, calculado a partir do leak</span>
+ret = input_addr + <span class="hljs-number">80</span>                              <span class="hljs-comment"># aponta pro início do NOP sled dentro de `input`</span>
+content[OFFSET:OFFSET + <span class="hljs-number">8</span>] = ret.to_bytes(<span class="hljs-number">8</span>, byteorder=<span class="hljs-string">&quot;little&quot;</span>)
+</div></code></pre>
+<p>Passo a passo:</p>
+<ol>
+<li><code>bufaddr</code> (vazado pelo servidor) dá o endereço real de <code>buffer</code> <strong>nesta
+execução específica</strong> do processo.</li>
+<li>Somar <code>INPUT_OFFSET_FROM_BUFFER</code> (<code>0x50</code>) move esse endereço do frame de
+<code>bof</code> para o frame de <code>main</code> — chegando ao endereço real de <code>input</code>.</li>
+<li>Somar mais <code>80</code> desloca do início de <code>input</code> até o <strong>início do NOP sled</strong>
+(byte 80 do payload — logo depois de onde o endereço de retorno foi escrito).
+É esse ponto, e não o início de <code>input</code>, que queremos executar primeiro.</li>
+<li><code>ret.to_bytes(8, byteorder=&quot;little&quot;)</code> converte o endereço de 64 bits para os
+8 bytes que o <code>retq</code> de <code>bof</code> vai efetivamente ler da pilha — em
+<strong>little-endian</strong>, porque é assim que a arquitetura x86-64 armazena valores
+multi-byte na memória (byte menos significativo no endereço mais baixo).</li>
+<li>Esses 8 bytes substituem exatamente <code>content[72:80]</code> — a posição que a seção
+01 confirmou ser o endereço de retorno salvo.</li>
+</ol>
+<p>Quando <code>bof</code> executa seu <code>retq</code> final, ele não volta para <code>main</code> no ponto normal
+de retorno — ele &quot;pula&quot; para dentro de <code>input</code>, cai bem no início do NOP sled, e
+desliza (<code>0x90</code> = <code>nop</code>, instrução que não faz nada além de avançar o <code>rip</code>) até
+o shellcode de verdade, que então executa com os privilégios do processo do
+servidor.</p>
+
+</body>
+</html>

